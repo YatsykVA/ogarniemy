@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Как менять текст сайта | Viktor Yatsyk</title>
+    <style>
+      :root {
+        --ink: #211e23;
+        --paper: #f8f0df;
+        --gold: #f2c16b;
+        --teal: #1ba59c;
+        --line: rgba(255, 255, 255, 0.16);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        color: #ffffff;
+        background:
+          linear-gradient(135deg, rgba(33, 30, 35, 0.94), rgba(92, 35, 55, 0.9)),
+          #211e23;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        line-height: 1.6;
+      }
+
+      main {
+        width: min(940px, calc(100% - 36px));
+        margin: 0 auto;
+        padding: 58px 0 72px;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 34px;
+        color: var(--gold);
+        font-weight: 750;
+        text-decoration: none;
+      }
+
+      h1 {
+        margin: 0 0 18px;
+        font-size: clamp(2.4rem, 7vw, 5.4rem);
+        line-height: 0.98;
+        letter-spacing: 0;
+      }
+
+      .lead {
+        max-width: 760px;
+        margin: 0 0 36px;
+        color: rgba(255, 255, 255, 0.78);
+        font-size: 1.2rem;
+      }
+
+      section {
+        padding: 28px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        color: var(--gold);
+        font-size: 1.4rem;
+      }
+
+      p,
+      li {
+        color: rgba(255, 255, 255, 0.78);
+      }
+
+      code,
+      pre {
+        color: #ffffff;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 8px;
+      }
+
+      code {
+        padding: 2px 7px;
+      }
+
+      pre {
+        overflow-x: auto;
+        padding: 18px;
+      }
+
+      .note {
+        padding: 20px;
+        color: var(--ink);
+        background: var(--paper);
+        border-left: 8px solid var(--teal);
+        border-radius: 8px;
+      }
+
+      .note p {
+        margin: 0;
+        color: rgba(33, 30, 35, 0.76);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <a class="back-link" href="./">← Назад на сайт</a>
+      <h1>Как самому менять текст сайта</h1>
+      <p class="lead">
+        Короткая памятка для сайта Viktor Yatsyk: где лежат тексты,
+        что можно менять руками и как обновить страницу после правки.
+      </p>
+
+      <section>
+        <h2>Главный файл</h2>
+        <p>
+          Тексты сайта лежат в файле:
+          <code>C:\Users\Viktor\Documents\Codex\2026-05-17\new-chat\presentation-site\index.html</code>
+        </p>
+      </section>
+
+      <section>
+        <h2>Самый простой способ</h2>
+        <ol>
+          <li>Открой <code>index.html</code> в Блокноте, VS Code или любом редакторе.</li>
+          <li>Нажми <code>Ctrl+F</code> и найди нужный текст.</li>
+          <li>Меняй только слова между HTML-тегами.</li>
+          <li>Сохрани файл через <code>Ctrl+S</code>.</li>
+          <li>Обнови сайт в браузере через <code>Ctrl+R</code>.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h2>Пример</h2>
+        <p>Было:</p>
+        <pre><code>Помогаю быстро упаковать идею в красивый сайт-презентацию,
+понятный текст и простую автоматизацию с ИИ.</code></pre>
+        <p>Можно заменить на:</p>
+        <pre><code>Создаю красивые сайты, презентации и визуальные материалы
+для личных проектов и малого бизнеса.</code></pre>
+      </section>
+
+      <section>
+        <h2>Что лучше не трогать</h2>
+        <p>
+          Не удаляй символы <code>&lt;</code>, <code>&gt;</code>,
+          <code>&lt;/...&gt;</code>, кавычки внутри ссылок и строки вида
+          <code>class="..."</code>.
+        </p>
+        <p>Например, здесь меняй только слово <code>Услуги</code>:</p>
+        <pre><code>&lt;a href="#idea"&gt;Услуги&lt;/a&gt;</code></pre>
+      </section>
+
+      <section>
+        <h2>Где основные тексты</h2>
+        <ul>
+          <li>Название вкладки браузера: строка с <code>&lt;title&gt;</code>.</li>
+          <li>Верхнее меню: <code>Старт</code>, <code>Услуги</code>, <code>Процесс</code>, <code>Пакеты</code>, <code>Контакт</code>.</li>
+          <li>Главный текст первого экрана: абзац под картинкой <code>Viktor Yatsyk</code>.</li>
+          <li>Карточки <code>Сайт</code>, <code>Текст</code>, <code>ИИ</code>: блоки внутри <code>hero-stats</code>.</li>
+          <li>Крупные заголовки: теги <code>&lt;h2&gt;...&lt;/h2&gt;</code>.</li>
+        </ul>
+      </section>
+
+      <section>
+        <div class="note">
+          <p>
+            Важно: красивая надпись <strong>Viktor Yatsyk</strong> на первом экране
+            сделана картинкой. Если нужно изменить именно её, надо создать новую PNG-картинку
+            или попросить Codex заменить файл.
+          </p>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
