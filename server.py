@@ -780,11 +780,12 @@ class App(BaseHTTPRequestHandler):
     def handle_client_login(self):
         data = self.read_json()
         login = str(data.get("login", "")).strip()
+        phone = normalize_phone(login)
         password = str(data.get("password", ""))
         conn = db()
         row = conn.execute(
-            "select * from clients where login = ? and deleted_at is null",
-            (login,),
+            "select * from clients where (login = ? or phone = ?) and deleted_at is null",
+            (login, phone),
         ).fetchone()
         if not row or row["password_hash"] != password_hash(password, row["salt"]):
             conn.close()
