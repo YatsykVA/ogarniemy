@@ -71,6 +71,23 @@ def ensure_admin_password(conn):
     )
 
 
+def ensure_pln_and_credit_defaults(conn):
+    if get_setting(conn, "pln_credit_defaults_applied") == "1":
+        return
+    conn.execute(
+        "insert into settings(key, value) values('currency', 'PLN') "
+        "on conflict(key) do update set value = excluded.value"
+    )
+    conn.execute(
+        "insert into settings(key, value) values('reserve_unit', 'credits') "
+        "on conflict(key) do update set value = excluded.value"
+    )
+    conn.execute(
+        "insert into settings(key, value) values('pln_credit_defaults_applied', '1') "
+        "on conflict(key) do update set value = excluded.value"
+    )
+
+
 def create_user(conn, login, password, display_name):
     salt = secrets.token_hex(16)
     conn.execute(
@@ -297,6 +314,7 @@ def init_db():
     restore_client_settlement_links(conn)
     purge_deleted_users(conn)
     ensure_admin_password(conn)
+    ensure_pln_and_credit_defaults(conn)
     create_user(conn, "worker1", "123456", "Сотрудник 1")
     create_user(conn, "worker2", "123456", "Сотрудник 2")
     create_client(conn, "client1", "123456", "Клиент 1")
