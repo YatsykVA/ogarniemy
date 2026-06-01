@@ -8,7 +8,7 @@
       name="description"
       content="Презентация ogarniemy.pro: сервис для клиентов и сотрудников, который помогает быстро закрывать доставки, поручения, поездки, помощь на месте и срочные городские задачи."
     >
-    <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./styles.css?v=2">
   </head>
   <body>
     <header class="site-header">
@@ -111,12 +111,12 @@
               <small>В карточке уже есть адрес, телефон, время и сумма.</small>
             </div>
             <div class="server-row">
-              <span class="status active">город</span>
+              <span class="status active">быстро</span>
               <strong>Купить деталь и привезти мастеру</strong>
               <small>Клиенту не нужно искать транспорт и объяснять маршрут заново.</small>
             </div>
             <div class="server-row">
-              <span class="status done">помощь</span>
+              <span class="status done">надежно</span>
               <strong>Накачать колесо и сопроводить до сервиса</strong>
               <small>Ситуация решается как поручение, а не как паника.</small>
             </div>
@@ -174,7 +174,7 @@
           </div>
 
           <div class="section-copy reveal">
-            <p class="eyebrow">почему клиенту удобно</p>
+            <p class="eyebrow">почему клиенту удобно?</p>
             <h2>Клиенту не нужно искать, кому доверить задачу.</h2>
             <p>
               В обычной жизни мелкая просьба быстро превращается в цепочку звонков: кто может, когда, сколько стоит, куда ехать, кому звонить. В ogarniemy.pro это становится одной понятной заявкой. Человек пишет задачу, добавляет детали и видит, что процесс начался.
@@ -187,6 +187,9 @@
               <li>задача не теряется в переписках: у нее есть ответственный и понятный статус;</li>
               <li>клиент получает спокойствие: просьба принята, человек назначен, результат ожидаем.</li>
             </ul>
+            <div class="section-cta">
+              <a class="primary-action" href="/client">Я клиент</a>
+            </div>
           </div>
         </div>
       </section>
@@ -194,7 +197,7 @@
       <section class="section-band employee-band" id="employee" data-slide="04">
         <div class="section-inner showcase-layout reverse">
           <div class="section-copy reveal">
-            <p class="eyebrow">почему сотруднику выгодно</p>
+            <p class="eyebrow">почему сотруднику выгодно?</p>
             <h2>Сотрудник видит понятные заказы, а не обрывки переписок.</h2>
             <p>
               Приложение превращает работу в спокойный список задач. В карточке уже есть суть поручения, адрес, контакт, цена, способ оплаты и действие, которое нужно сделать. Сотрудник быстро понимает, подходит ли ему заказ, берет его и закрывает по факту выполнения.
@@ -209,6 +212,9 @@
                 <h3>Прозрачно</h3>
                 <p>Видны выполненные задачи, расчет, сумма к выплате и история. Сотрудник понимает, за что он получает деньги.</p>
               </div>
+            </div>
+            <div class="section-cta">
+              <a class="primary-action" href="/employee">Я сотрудник</a>
             </div>
           </div>
 
@@ -246,7 +252,7 @@
       <section class="section-band flow-band" id="flow" data-slide="05">
         <div class="section-inner">
           <div class="section-heading reveal">
-            <p class="eyebrow">как это работает</p>
+            <p class="eyebrow">как это работает?</p>
             <h2>Простой путь: попросил, приняли, сделали, рассчитались.</h2>
             <p>
               Сервис должен ощущаться как надежный человек “под рукой”, только с нормальной организацией. Клиент не держит задачу в голове, сотрудник не теряет детали, компания видит качество и деньги.
@@ -282,7 +288,7 @@
       <section class="section-band launch-band" id="launch" data-slide="06">
         <div class="section-inner final-layout">
           <div class="section-copy reveal">
-            <p class="eyebrow">почему это может выстрелить</p>
+            <p class="eyebrow">почему мы?</p>
             <h2>Людям постоянно нужна помощь, но мелкие задачи до сих пор решаются слишком хаотично.</h2>
             <p>
               У каждого бывают ситуации, когда нет времени, машины, инструмента, знакомого человека или просто сил. ogarniemy.pro может стать привычной кнопкой помощи: открыл, написал задачу, получил результат.
@@ -310,9 +316,13 @@
                 <i data-lucide="rotate-ccw"></i>
                 Смотреть снова
               </a>
-              <a class="secondary-action" href="#client">
-                <i data-lucide="smartphone"></i>
-                К приложению
+              <a class="secondary-action" href="/client">
+                <i data-lucide="user"></i>
+                Я клиент
+              </a>
+              <a class="secondary-action" href="/employee">
+                <i data-lucide="briefcase-business"></i>
+                Я сотрудник
               </a>
             </div>
           </div>
@@ -335,6 +345,6 @@
 
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script src="./script.js?v=5"></script>
-    <script src="./language.js?v=1"></script>
+    <script src="./language.js?v=2"></script>
   </body>
 </html>

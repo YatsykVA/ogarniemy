@@ -87,6 +87,12 @@ def create_client(conn, login, password, display_name):
     )
 
 
+def normalize_phone(value):
+    text = str(value or "").strip()
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return f"+{digits}" if digits else ""
+
+
 def is_placeholder_text(value):
     text = str(value or "").strip()
     return bool(text) and all(ch == "?" or ch.isspace() or ch.isdigit() for ch in text)
@@ -285,6 +291,7 @@ def init_db():
         """
     )
     ensure_task_columns(conn)
+    ensure_account_columns(conn)
     conn.execute("update tasks set settlement_id = null where status != 'completed' and settlement_id is not null")
     conn.execute("update tasks set client_settlement_id = null where status != 'completed' and client_settlement_id is not null")
     restore_client_settlement_links(conn)
@@ -342,6 +349,15 @@ def ensure_task_columns(conn):
     event_columns = {row["name"] for row in conn.execute("pragma table_info(task_events)").fetchall()}
     if "settlement_id" not in event_columns:
         conn.execute("alter table task_events add column settlement_id integer")
+
+
+def ensure_account_columns(conn):
+    user_columns = {row["name"] for row in conn.execute("pragma table_info(users)").fetchall()}
+    if "phone" not in user_columns:
+        conn.execute("alter table users add column phone text not null default ''")
+    client_columns = {row["name"] for row in conn.execute("pragma table_info(clients)").fetchall()}
+    if "phone" not in client_columns:
+        conn.execute("alter table clients add column phone text not null default ''")
 
 
 def restore_client_settlement_links(conn):
@@ -495,7 +511,11 @@ class App(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/":
             relative_path = "index.html"
-        elif path in {"/styles.css", "/script.js", "/language.js"} or path.startswith("/assets/"):
+        elif path == "/client":
+            relative_path = "client.html"
+        elif path == "/employee":
+            relative_path = "employee.html"
+        elif path in {"/styles.css", "/script.js", "/language.js", "/signup.css", "/signup.js"} or path.startswith("/assets/") or path.startswith("/downloads/"):
             relative_path = path.lstrip("/")
         elif path == "/admin":
             self.send_redirect("/server")
@@ -524,11 +544,20 @@ class App(BaseHTTPRequestHandler):
         if path == "/":
             self.send_static_file("index.html")
             return
-        if path in {"/styles.css", "/script.js", "/language.js"}:
+        if path in {"/styles.css", "/script.js", "/language.js", "/signup.css", "/signup.js"}:
             self.send_static_file(path.lstrip("/"), 60 * 60)
             return
         if path.startswith("/assets/"):
             self.send_static_file(path.lstrip("/"), 7 * 24 * 60 * 60)
+            return
+        if path.startswith("/downloads/"):
+            self.send_static_file(path.lstrip("/"))
+            return
+        if path == "/client":
+            self.send_static_file("client.html")
+            return
+        if path == "/employee":
+            self.send_static_file("employee.html")
             return
         if path == "/admin":
             self.send_redirect("/server")
@@ -611,6 +640,12 @@ class App(BaseHTTPRequestHandler):
             return
         if path == "/api/client-login":
             self.handle_client_login()
+            return
+        if path == "/api/register/client":
+            self.handle_public_client_registration()
+            return
+        if path == "/api/register/employee":
+            self.handle_public_employee_registration()
             return
         if path == "/api/translate":
             self.handle_translate()
@@ -773,6 +808,55 @@ class App(BaseHTTPRequestHandler):
                 },
             }
         )
+
+    def handle_public_client_registration(self):
+        data = self.read_json()
+        display_name = str(data.get("displayName", "")).strip()
+        phone = normalize_phone(data.get("phone", ""))
+        password = str(data.get("password", ""))
+        if not display_name or len(phone) < 8 or len(password) < 4:
+            self.send_json({"error": "name_phone_password_required"}, 400)
+            return
+        conn = db()
+        exists = conn.execute(
+            "select id from clients where phone = ? and deleted_at is null",
+            (phone,),
+        ).fetchone()
+        if exists:
+            conn.close()
+            self.send_json({"error": "phone_already_registered"}, 409)
+            return
+        login = f"client-{secrets.token_hex(4)}"
+        while conn.execute("select id from clients where login = ?", (login,)).fetchone():
+            login = f"client-{secrets.token_hex(4)}"
+        create_client(conn, login, password, display_name)
+        conn.execute("update clients set phone = ? where login = ?", (phone, login))
+        conn.commit()
+        conn.close()
+        self.send_json({"ok": True, "login": login}, 201)
+
+    def handle_public_employee_registration(self):
+        data = self.read_json()
+        display_name = str(data.get("displayName", "")).strip()
+        phone = normalize_phone(data.get("phone", ""))
+        password = str(data.get("password", ""))
+        if not display_name or len(phone) < 8 or len(password) < 4:
+            self.send_json({"error": "name_phone_password_required"}, 400)
+            return
+        conn = db()
+        exists = conn.execute(
+            "select id from users where login = ?",
+            (phone,),
+        ).fetchone()
+        if exists:
+            conn.close()
+            self.send_json({"error": "phone_already_registered"}, 409)
+            return
+        create_user(conn, phone, password, display_name)
+        conn.execute("update users set phone = ? where login = ?", (phone, phone))
+        conn.commit()
+        conn.close()
+        self.send_json({"ok": True, "login": phone}, 201)
 
     def handle_translate(self):
         data = self.read_json()
@@ -1621,7 +1705,7 @@ class App(BaseHTTPRequestHandler):
         conn = db()
         rows = conn.execute(
             """
-            select users.id, users.login, users.display_name,
+            select users.id, users.login, users.display_name, users.phone,
                    count(tasks.id) as task_count
             from users
             left join tasks on tasks.assigned_to = users.id and tasks.settlement_id is null
@@ -1641,6 +1725,7 @@ class App(BaseHTTPRequestHandler):
                 "id": row["id"],
                 "login": row["login"],
                 "displayName": row["display_name"],
+                "phone": row["phone"],
                 "taskCount": row["task_count"],
                 "totals": user_totals.get(row["id"], {}),
                 "payoutPrice": user_totals.get(row["id"], {}).get("payoutPrice", 0),
@@ -1690,7 +1775,7 @@ class App(BaseHTTPRequestHandler):
         conn = db()
         rows = conn.execute(
             """
-            select clients.id, clients.login, clients.display_name,
+            select clients.id, clients.login, clients.display_name, clients.phone,
                    count(tasks.id) as task_count,
                    coalesce(sum(tasks.price), 0) as total_price
             from clients
@@ -1737,6 +1822,7 @@ class App(BaseHTTPRequestHandler):
                     "id": row["id"],
                     "login": row["login"],
                     "displayName": row["display_name"],
+                    "phone": row["phone"],
                     "taskCount": row["task_count"],
                     "totalPrice": totals.get("activePaymentDue", 0),
                     "reservePrice": totals.get("reservePrice", reserve_totals.get(row["id"], 0)),
@@ -4626,7 +4712,7 @@ USERS_HTML = r"""<!doctype html>
           <div class="userHeader">
             <div>
               <strong>${escapeHtml(u.displayName)}</strong>
-              <div class="meta">${texts[language].login}: ${escapeHtml(u.login)} · ${texts[language].tasks}: ${u.taskCount}</div>
+              <div class="meta">${texts[language].login}: ${escapeHtml(u.login)}${u.phone ? " · Телефон: " + escapeHtml(u.phone) : ""} · ${texts[language].tasks}: ${u.taskCount}</div>
             </div>
             <div class="userActions">
               ${appSettings.showPrices ? `<div class="userMoneyMini"><strong>${formatMoney(u.payoutPrice ?? u.totals?.payoutPrice ?? 0)}</strong><span>${texts[language].payout}</span></div>` : ""}
@@ -5132,7 +5218,7 @@ CLIENTS_HTML = r"""<!doctype html>
           <div class="clientHeader">
             <div>
               <strong>${escapeHtml(client.displayName)}</strong>
-              <div class="meta">Логин: ${escapeHtml(client.login)} · Заданий: ${client.taskCount}</div>
+              <div class="meta">Логин: ${escapeHtml(client.login)}${client.phone ? " · Телефон: " + escapeHtml(client.phone) : ""} · Заданий: ${client.taskCount}</div>
             </div>
             <div class="actions">
               <div class="clientMoneyMini"><strong>${formatMoney(client.totalPrice || 0)}</strong><span>Сумма к оплате</span></div>

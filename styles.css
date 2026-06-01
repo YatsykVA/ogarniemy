@@ -327,6 +327,11 @@ h3 {
   align-items: center;
 }
 
+.section-cta {
+  display: flex;
+  margin-top: 24px;
+}
+
 .primary-action,
 .secondary-action,
 .icon-action {
@@ -359,9 +364,9 @@ h3 {
 
 .icon-action {
   width: 48px;
-  color: var(--white);
+  color: var(--amber);
   background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid var(--amber);
 }
 
 .primary-action:hover,
@@ -1128,12 +1133,56 @@ h3 {
 
   .section-band {
     min-height: auto;
-    padding: 132px 18px 58px;
-    scroll-margin-top: 196px;
+    padding: 220px 18px 64px;
+    scroll-margin-top: 214px;
   }
 
   .hero {
     min-height: auto;
+  }
+
+  .hero-grid {
+    gap: 28px;
+  }
+
+  .center-body {
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .brand-showcase .center-body {
+    gap: 12px;
+  }
+
+  .brand-lockup {
+    grid-template-columns: 52px minmax(0, 1fr);
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .brand-lockup strong {
+    font-size: 1.45rem;
+    overflow-wrap: anywhere;
+  }
+
+  .brand-lockup span {
+    margin-top: 4px;
+    font-size: 0.84rem;
+  }
+
+  .promise-card {
+    padding: 16px;
+  }
+
+  .promise-card h3 {
+    margin-bottom: 10px;
+    font-size: 1.3rem;
+  }
+
+  .promise-card p {
+    margin-bottom: 10px;
+    font-size: 0.94rem;
+    line-height: 1.42;
   }
 
   h1 {
@@ -1173,5 +1222,18 @@ h3 {
   .deck-controls {
     right: 14px;
     bottom: 14px;
+  }
+
+  .icon-action {
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .final-actions {
+    align-items: stretch;
+  }
+
+  .final-actions a {
+    width: 100%;
   }
 }

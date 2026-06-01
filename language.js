@@ -261,6 +261,39 @@
     "главное обещание короткое и сильное: “Ogarniemy” - мы все уладим.": "головна обіцянка коротка й сильна: “Ogarniemy” - ми все владнаємо."
   });
 
+  Object.assign(dictionary.pl, {
+    "быстро": "szybko",
+    "надежно": "niezawodnie",
+    "почему клиенту удобно?": "dlaczego klientowi jest wygodnie?",
+    "почему сотруднику выгодно?": "dlaczego wykonawcy się opłaca?",
+    "как это работает?": "jak to działa?",
+    "почему мы?": "dlaczego my?",
+    "Я клиент": "Jestem klientem",
+    "Я сотрудник": "Jestem wykonawcą"
+  });
+
+  Object.assign(dictionary.en, {
+    "быстро": "fast",
+    "надежно": "reliable",
+    "почему клиенту удобно?": "why is it convenient for clients?",
+    "почему сотруднику выгодно?": "why does it work for workers?",
+    "как это работает?": "how does it work?",
+    "почему мы?": "why us?",
+    "Я клиент": "I am a client",
+    "Я сотрудник": "I am a worker"
+  });
+
+  Object.assign(dictionary.uk, {
+    "быстро": "швидко",
+    "надежно": "надійно",
+    "почему клиенту удобно?": "чому клієнту зручно?",
+    "почему сотруднику выгодно?": "чому працівнику вигідно?",
+    "как это работает?": "як це працює?",
+    "почему мы?": "чому ми?",
+    "Я клиент": "Я клієнт",
+    "Я сотрудник": "Я працівник"
+  });
+
   const originalText = new WeakMap();
   const languageSelect = document.querySelector("#presentationLanguage");
 

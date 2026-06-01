@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ogarniemy.pro | Wykonawca</title>
+    <link rel="stylesheet" href="/signup.css?v=1">
+  </head>
+  <body data-role="employee" data-apk="/downloads/ogarniemy-employee.apk">
+    <main class="signup-shell">
+      <a class="signup-brand" href="/">
+        <img src="/assets/employee-app-icon.png" alt="">
+        <span>ogarniemy.pro</span>
+      </a>
+      <section class="signup-card">
+        <div>
+          <p class="signup-eyebrow">Dla wykonawcy</p>
+          <h1>Zarejestruj się i pobierz aplikację</h1>
+          <p class="signup-lead">Załóż konto wykonawcy. Numer telefonu będzie Twoim loginem w aplikacji.</p>
+          <form class="signup-form" id="signupForm">
+            <label>Imię wykonawcy<input name="displayName" autocomplete="name" required></label>
+            <label>Numer telefonu<input name="phone" type="tel" autocomplete="tel" placeholder="+48 000 000 000" required></label>
+            <label>Hasło<input name="password" type="password" autocomplete="new-password" minlength="4" required></label>
+            <button type="submit">Zarejestruj wykonawcę</button>
+          </form>
+          <div class="signup-result" id="signupResult" hidden></div>
+        </div>
+        <aside class="download-card">
+          <img class="qr-code" src="/assets/employee-download-qr.png" alt="Kod QR do pobrania aplikacji wykonawcy">
+          <h2>Aplikacja wykonawcy</h2>
+          <p>Zeskanuj kod telefonem albo pobierz plik bezpośrednio.</p>
+          <a class="download-button" data-download download>Pobierz aplikację wykonawcy</a>
+        </aside>
+      </section>
+      <a class="back-link" href="/">Wróć do prezentacji</a>
+    </main>
+    <script src="/signup.js?v=1"></script>
+  </body>
+</html>
