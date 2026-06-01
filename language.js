@@ -310,7 +310,9 @@
     "Отсканируйте QR-код или скачайте приложение напрямую.": "Zeskanuj kod QR albo pobierz aplikację bezpośrednio.",
     "Скачать для Android": "Pobierz na Androida",
     "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "Wersja na iPhone'a jest przygotowywana. Kod QR prowadzi do aktualnych informacji na stronie.",
-    "Скоро для iPhone": "Wkrótce na iPhone'a"
+    "Скачать для iPhone": "Pobierz na iPhone'a"
+    ,"40 кредитов": "40 kredytów"
+    ,"60 кредитов": "60 kredytów"
   });
 
   Object.assign(dictionary.en, {
@@ -329,7 +331,9 @@
     "Отсканируйте QR-код или скачайте приложение напрямую.": "Scan the QR code or download the app directly.",
     "Скачать для Android": "Download for Android",
     "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "The iPhone version is being prepared. The QR code leads to the latest information on the website.",
-    "Скоро для iPhone": "Coming soon for iPhone"
+    "Скачать для iPhone": "Download for iPhone"
+    ,"40 кредитов": "40 credits"
+    ,"60 кредитов": "60 credits"
   });
 
   Object.assign(dictionary.uk, {
@@ -348,7 +352,9 @@
     "Отсканируйте QR-код или скачайте приложение напрямую.": "Відскануйте QR-код або завантажте застосунок безпосередньо.",
     "Скачать для Android": "Завантажити для Android",
     "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "Версія для iPhone готується. QR-код веде до актуальної інформації на сайті.",
-    "Скоро для iPhone": "Незабаром для iPhone"
+    "Скачать для iPhone": "Завантажити для iPhone"
+    ,"40 кредитов": "40 кредитів"
+    ,"60 кредитов": "60 кредитів"
   });
 
   const originalText = new WeakMap();
@@ -373,6 +379,11 @@
       }
     });
     while (walker.nextNode()) translateTextNode(walker.currentNode, language);
+    document.querySelectorAll("[data-placeholder]").forEach((input) => {
+      const source = input.dataset.placeholder;
+      input.placeholder = dictionary[language]?.[source] || dictionary.ru[source] || source;
+      input.setAttribute("aria-label", input.placeholder);
+    });
   }
 
   const saved = localStorage.getItem("presentationLanguage") || "pl";

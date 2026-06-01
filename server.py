@@ -923,7 +923,8 @@ class App(BaseHTTPRequestHandler):
     def admin_settings(self):
         conn = db()
         settings = {
-            "currency": get_setting(conn, "currency") or "RUB",
+            "currency": get_setting(conn, "currency") or "PLN",
+            "reserveUnit": get_setting(conn, "reserve_unit") or "credits",
             "showPrices": (get_setting(conn, "show_prices") or "1") != "0",
             "completedFeePercent": float(get_setting(conn, "completed_fee_percent") or "1"),
             "refusedFeePercent": float(get_setting(conn, "refused_fee_percent") or "1"),
@@ -953,9 +954,13 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "admin_unauthorized"}, 401)
             return
         data = self.read_json()
-        currency = str(data.get("currency", "RUB")).strip().upper()
+        currency = str(data.get("currency", "PLN")).strip().upper()
         if currency not in ("RUB", "USD", "EUR", "PLN", "UAH"):
             self.send_json({"error": "bad_currency"}, 400)
+            return
+        reserve_unit = str(data.get("reserveUnit", "credits")).strip().lower()
+        if reserve_unit not in ("credits", "tokens", "coins", "points", "satoshi"):
+            self.send_json({"error": "bad_reserve_unit"}, 400)
             return
         show_prices = "1" if data.get("showPrices", True) else "0"
         completed_fee_percent = parse_price(data.get("completedFeePercent", 1))
@@ -982,6 +987,10 @@ class App(BaseHTTPRequestHandler):
         conn.execute(
             "insert into settings(key, value) values('currency', ?) on conflict(key) do update set value = excluded.value",
             (currency,),
+        )
+        conn.execute(
+            "insert into settings(key, value) values('reserve_unit', ?) on conflict(key) do update set value = excluded.value",
+            (reserve_unit,),
         )
         conn.execute(
             "insert into settings(key, value) values('show_prices', ?) on conflict(key) do update set value = excluded.value",
@@ -3887,7 +3896,7 @@ INDEX_HTML = r"""<!doctype html>
   <script>
     const tasks = document.querySelector("#tasks");
     let language = localStorage.getItem("language") || "ru";
-    let appSettings = { currency: "RUB", showPrices: true };
+    let appSettings = { currency: "PLN", reserveUnit: "credits", showPrices: true };
     let clientOptions = [];
     const texts = {
       ru: { serverTitle: "Задания", openUsers: "Сотрудники", completedTasks: "Выполненные задания", calculations: "Расчеты", changePassword: "Изменить пароль", oldPassword: "Старый пароль", oldPasswordRepeat: "Повторите старый пароль", newPassword: "Введите новый пароль", passwordChanged: "Пароль изменен", changePasswordError: "Не удалось изменить пароль: ", confirmPassword: "Пароль подтверждения", taskTitle: "Название задания", description: "Описание", address: "Адрес", price: "Цена", add: "Добавить", employee: "сотрудник", delete: "Удалить", restart: "Начать заново", confirmDelete: "Удалить это задание?", resetError: "Не удалось вернуть задание: ", deleteError: "Не удалось удалить задание: ", createdAt: "Создано", acceptedAt: "Принято", completedAt: "Выполнено", new: "Новое", accepted: "Принято", declined: "Отклонено", completed: "Выполнено", refused: "Отказался" },
@@ -4190,7 +4199,11 @@ INDEX_HTML = r"""<!doctype html>
       loadTasks();
     }
     function formatMoney(value) {
-      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "RUB" }).format(Number(value || 0));
+      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
+    }
+    function formatReserve(value) {
+      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
       return new Date(value * 1000).toLocaleString("ru-RU");
@@ -4325,7 +4338,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
   </main>
   <script>
     const settlements = document.querySelector("#settlements");
-    let appSettings = { currency: "RUB", showPrices: true };
+    let appSettings = { currency: "PLN", reserveUnit: "credits", showPrices: true };
     let adminPassword = sessionStorage.getItem("adminPassword") || "";
     function adminHeaders(extra = {}) {
       if (!adminPassword) {
@@ -4357,7 +4370,11 @@ CALCULATIONS_HTML = r"""<!doctype html>
       }
     }
     function formatMoney(value) {
-      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "RUB" }).format(Number(value || 0));
+      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
+    }
+    function formatReserve(value) {
+      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
       return new Date(value * 1000).toLocaleString("ru-RU");
@@ -4436,7 +4453,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
       const reserveDeductions = Number(totals.completedFeeFromReserve || 0) + Number(totals.refusedFeeFromReserve || 0);
       return `
         <h4>Резерв в расчете</h4>
-        <p class="meta">Резерв: ${formatMoney(totals.reservePrice || 0)} · В резерв: ${formatMoney(totals.completedToReserve || 0)} · Из резерва в выплату: ${formatMoney(totals.reserveToCompleted || 0)} · Удержано из резерва: ${formatMoney(reserveDeductions)}</p>
+        <p class="meta">Резерв: ${formatReserve(totals.reservePrice || 0)} · В резерв: ${formatReserve(totals.completedToReserve || 0)} · Из резерва в выплату: ${formatReserve(totals.reserveToCompleted || 0)} · Удержано из резерва: ${formatReserve(reserveDeductions)}</p>
       `;
     }
     function reserveEventName(kind) {
@@ -4456,7 +4473,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
       }
       return `
         <h4>Операции резерва</h4>
-        ${events.map(event => `<p class="meta">${formatDate(event.createdAt)} · ${reserveEventName(event.kind)} · ${formatMoney(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>`).join("")}
+        ${events.map(event => `<p class="meta">${formatDate(event.createdAt)} · ${reserveEventName(event.kind)} · ${formatReserve(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>`).join("")}
       `;
     }
     function renderTaskSection(title, tasks, type) {
@@ -4609,7 +4626,7 @@ USERS_HTML = r"""<!doctype html>
     <button class="secondary" type="button" onclick="refreshUsersList()" data-i18n="refreshList">Обновить список</button>
     <form id="userForm">
       <input id="userDisplayName" data-placeholder="employeeName" placeholder="Имя сотрудника" required>
-      <input id="userLogin" placeholder="Номер телефона" required>
+      <input id="userLogin" data-placeholder="login" placeholder="Логин" required>
       <input id="userPassword" data-placeholder="password" placeholder="Пароль" required>
       <button data-i18n="add">Добавить</button>
     </form>
@@ -4621,7 +4638,7 @@ USERS_HTML = r"""<!doctype html>
     let editingUserId = null;
     let openReportId = null;
     let language = localStorage.getItem("language") || "ru";
-    let appSettings = { currency: "RUB", showPrices: true };
+    let appSettings = { currency: "PLN", reserveUnit: "credits", showPrices: true };
     const texts = {
       ru: { employees: "Сотрудники", changePassword: "Изменить пароль", oldPassword: "Старый пароль", oldPasswordRepeat: "Повторите старый пароль", newAdminPassword: "Введите новый пароль", passwordChanged: "Пароль изменен", changePasswordError: "Не удалось изменить пароль: ", backHome: "Вернуться на главный экран", refreshList: "Обновить список", employeeName: "Имя сотрудника", login: "Логин", password: "Пароль", newPassword: "Новый пароль, если нужно", add: "Добавить", tasks: "Заданий", report: "Отчет", calculate: "Рассчитать", edit: "Редактировать", save: "Сохранить", deleteEmployee: "Удалить сотрудника", loadingReport: "Загружаю отчет...", reportError: "Не удалось загрузить отчет: ", saveError: "Не удалось сохранить сотрудника: ", addError: "Не удалось добавить сотрудника: ", settleError: "Не удалось выполнить расчет: ", deleteUserError: "Не удалось удалить сотрудника: ", confirmPassword: "Пароль подтверждения", detailedReport: "Подробный отчет", history: "История расчетов", settlement: "Расчет", completed: "Выполнено", refused: "Отказался", accepted: "В работе", allAssigned: "Всего назначено", completedSum: "Сумма выполненных", refusedSum: "Сумма отказанных", reserve: "Резерв", payout: "Сумма к выплате", completedWorks: "Выполненные работы", refusedWorks: "Отказанные работы", otherWorks: "В работе", noRecords: "Нет записей.", address: "Адрес", price: "Цена", status: "Статус", created: "Создано", changed: "Изменено", noDate: "нет даты", statusCompleted: "Выполнено", statusRefused: "Отказался", statusAccepted: "Принято", statusDeclined: "Отклонено", statusNew: "Новое" },
       en: { employees: "Employees", backHome: "Back to the main screen", refreshList: "Refresh list", employeeName: "Employee name", login: "Login", password: "Password", newPassword: "New password, if needed", add: "Add", tasks: "Tasks", report: "Report", calculate: "Calculate", edit: "Edit", save: "Save", deleteEmployee: "Delete employee", loadingReport: "Loading report...", reportError: "Could not load report: ", saveError: "Could not save employee: ", addError: "Could not add employee: ", settleError: "Could not calculate: ", deleteUserError: "Could not delete employee: ", confirmPassword: "Confirmation password", detailedReport: "Detailed report", history: "Calculation history", settlement: "Calculation", completed: "Completed", refused: "Refused", accepted: "In progress", allAssigned: "Total assigned", completedSum: "Completed total", refusedSum: "Refused total", reserve: "Reserve", payout: "Amount to pay", completedWorks: "Completed jobs", refusedWorks: "Refused jobs", otherWorks: "Other assigned jobs", noRecords: "No records.", address: "Address", price: "Price", status: "Status", created: "Created", changed: "Changed", noDate: "no date", statusCompleted: "Completed", statusRefused: "Refused", statusAccepted: "Accepted", statusDeclined: "Declined", statusNew: "New" },
@@ -4712,11 +4729,11 @@ USERS_HTML = r"""<!doctype html>
           <div class="userHeader">
             <div>
               <strong>${escapeHtml(u.displayName)}</strong>
-              <div class="meta">Телефон: ${escapeHtml(u.phone || u.login)} · ${texts[language].tasks}: ${u.taskCount}</div>
+              <div class="meta">${texts[language].login}: ${escapeHtml(u.login)} · ${texts[language].tasks}: ${u.taskCount}</div>
             </div>
             <div class="userActions">
               ${appSettings.showPrices ? `<div class="userMoneyMini"><strong>${formatMoney(u.payoutPrice ?? u.totals?.payoutPrice ?? 0)}</strong><span>${texts[language].payout}</span></div>` : ""}
-              ${appSettings.showPrices ? `<div class="userMoneyMini"><strong>${formatMoney(u.reservePrice ?? u.totals?.reservePrice ?? 0)}</strong><span>${texts[language].reserve}</span></div>` : ""}
+              ${appSettings.showPrices ? `<div class="userMoneyMini"><strong>${formatReserve(u.reservePrice ?? u.totals?.reservePrice ?? 0)}</strong><span>${texts[language].reserve}</span></div>` : ""}
               <button class="secondary" type="button" onclick="toggleReport(${u.id})">${texts[language].report}</button>
               <button class="secondary" type="button" onclick="settleUser(${u.id})">${texts[language].calculate}</button>
               <button class="secondary" type="button" onclick="toggleEdit(${u.id})">${texts[language].edit}</button>
@@ -4724,7 +4741,7 @@ USERS_HTML = r"""<!doctype html>
           </div>
           <form class="editForm" id="edit-${u.id}" style="display:none" onsubmit="saveUser(event, ${u.id})">
             <input name="displayName" value="${escapeAttr(u.displayName)}" placeholder="${texts[language].employeeName}" required>
-            <input name="login" value="${escapeAttr(u.phone || u.login)}" placeholder="Номер телефона" required>
+            <input name="login" value="${escapeAttr(u.login)}" placeholder="${texts[language].login}" required>
             <input name="password" value="" placeholder="${texts[language].newPassword}">
             <button>${texts[language].save}</button>
             <button class="danger" type="button" onclick="deleteUser(${u.id})">${texts[language].deleteEmployee}</button>
@@ -4796,7 +4813,7 @@ USERS_HTML = r"""<!doctype html>
       const reserve = report.totals.reservePrice ?? 0;
       return `
         <div class="statBox reserveBox">
-          <strong>${formatMoney(reserve)}</strong>
+          <strong>${formatReserve(reserve)}</strong>
           <div class="reserveControls">
             <button class="secondary" type="button" onclick="reserveTransfer(${report.user.id}, 'from_reserve')">-</button>
             <span>${texts[language].reserve}</span>
@@ -4832,7 +4849,7 @@ USERS_HTML = r"""<!doctype html>
         <section class="reportSection">
           <h4>Операции резерва</h4>
           ${events.map(event => `
-            <p class="meta">${formatDate(event.createdAt)} · ${reserveEventName(event.kind)} · ${formatMoney(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
+            <p class="meta">${formatDate(event.createdAt)} · ${reserveEventName(event.kind)} · ${formatReserve(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
           `).join("")}
         </section>
       `;
@@ -4934,7 +4951,11 @@ USERS_HTML = r"""<!doctype html>
       return new Date(value * 1000).toLocaleString("ru-RU");
     }
     function formatMoney(value) {
-      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "RUB" }).format(Number(value || 0));
+      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
+    }
+    function formatReserve(value) {
+      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function calculationStatus(item) {
       return item && item.calculated ? "Оплачено" : "Не оплачено";
@@ -5138,7 +5159,7 @@ CLIENTS_HTML = r"""<!doctype html>
     const clients = document.querySelector("#clients");
     let editingClientId = null;
     let openReportId = null;
-    let appSettings = { currency: "RUB", showPrices: true };
+    let appSettings = { currency: "PLN", reserveUnit: "credits", showPrices: true };
     let adminPassword = sessionStorage.getItem("adminPassword") || "";
     function adminHeaders(extra = {}) {
       if (!adminPassword) {
@@ -5165,7 +5186,11 @@ CLIENTS_HTML = r"""<!doctype html>
       return escapeHtml(value).replace(/"/g, "&quot;");
     }
     function formatMoney(value) {
-      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "RUB" }).format(Number(value || 0));
+      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
+    }
+    function formatReserve(value) {
+      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
       if (!value) return "нет даты";
@@ -5222,7 +5247,7 @@ CLIENTS_HTML = r"""<!doctype html>
             </div>
             <div class="actions">
               <div class="clientMoneyMini"><strong>${formatMoney(client.totalPrice || 0)}</strong><span>Сумма к оплате</span></div>
-              <div class="clientMoneyMini"><strong>${formatMoney(client.reservePrice || 0)}</strong><span>Резерв</span></div>
+              <div class="clientMoneyMini"><strong>${formatReserve(client.reservePrice || 0)}</strong><span>Резерв</span></div>
               <button class="secondary" type="button" onclick="toggleClientReport(${client.id})">Отчет</button>
               <button class="secondary" type="button" onclick="settleClientFromList(${client.id})">Рассчитать</button>
               <button class="secondary" type="button" onclick="toggleEdit(${client.id})">Редактировать</button>
@@ -5300,7 +5325,7 @@ CLIENTS_HTML = r"""<!doctype html>
       const reserve = report.totals.reservePrice ?? 0;
       return `
         <div class="statBox reserveBox">
-          <strong>${formatMoney(reserve)}</strong>
+          <strong>${formatReserve(reserve)}</strong>
           <div class="reserveControls">
             <button class="secondary" type="button" disabled title="Временно отключено">-</button>
             <span>Резерв</span>
@@ -5335,7 +5360,7 @@ CLIENTS_HTML = r"""<!doctype html>
         <section class="reportSection">
           <h4>Операции резерва</h4>
           ${events.map(event => `
-            <p class="meta">${formatDate(event.createdAt)} · ${clientReserveEventName(event.kind)} · ${formatMoney(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
+            <p class="meta">${formatDate(event.createdAt)} · ${clientReserveEventName(event.kind)} · ${formatReserve(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
           `).join("")}
         </section>
       `;
@@ -5538,7 +5563,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
   </main>
   <script>
     const items = document.querySelector("#items");
-    let appSettings = { currency: "RUB", showPrices: true };
+    let appSettings = { currency: "PLN", reserveUnit: "credits", showPrices: true };
     let adminPassword = sessionStorage.getItem("adminPassword") || "";
     function adminHeaders(extra = {}) {
       if (!adminPassword) {
@@ -5572,7 +5597,11 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       return names[status] || status || "";
     }
     function formatMoney(value) {
-      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "RUB" }).format(Number(value || 0));
+      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
+    }
+    function formatReserve(value) {
+      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function calculationStatus(item) {
       return item && item.calculated ? "Оплачено" : "Не оплачено";
@@ -5630,7 +5659,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       const totals = item.totals || {};
       return `
         <h4>Резерв в расчете</h4>
-        <p class="meta">Резерв до расчета: ${formatMoney(totals.reserveBeforeCompleted || 0)} · Списано из резерва: ${formatMoney(totals.reserveUsedForCompleted || 0)} · Остаток резерва: ${formatMoney(totals.reservePrice || 0)} · Сумма к оплате: ${formatMoney(totals.totalPrice || 0)}</p>
+        <p class="meta">Резерв до расчета: ${formatReserve(totals.reserveBeforeCompleted || 0)} · Списано из резерва: ${formatReserve(totals.reserveUsedForCompleted || 0)} · Остаток резерва: ${formatReserve(totals.reservePrice || 0)} · Сумма к оплате: ${formatMoney(totals.totalPrice || 0)}</p>
       `;
     }
     function reserveEventName(kind) {
@@ -5650,7 +5679,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       return `
         <h4>Операции резерва</h4>
         ${events.map(event => `
-          <p class="meta">${formatDate(event.createdAt)} · ${reserveEventName(event.kind)} · ${formatMoney(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
+          <p class="meta">${formatDate(event.createdAt)} · ${reserveEventName(event.kind)} · ${formatReserve(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
         `).join("")}
       `;
     }
@@ -5781,6 +5810,15 @@ SETTINGS_HTML = r"""<!doctype html>
           <option value="UAH">UAH</option>
         </select>
       </label>
+      <label>Единица резерва
+        <select id="reserveUnit">
+          <option value="credits">Кредиты</option>
+          <option value="tokens">Токены</option>
+          <option value="coins">Коины</option>
+          <option value="points">Баллы</option>
+          <option value="satoshi">Сатоши</option>
+        </select>
+      </label>
       <label>
         <input id="showPrices" type="checkbox">
         Показывать цены и суммы
@@ -5871,7 +5909,8 @@ SETTINGS_HTML = r"""<!doctype html>
       }
       const data = await res.json();
       const settings = data.settings || {};
-      currency.value = settings.currency || "RUB";
+      currency.value = settings.currency || "PLN";
+      reserveUnit.value = settings.reserveUnit || "credits";
       showPrices.checked = settings.showPrices !== false;
       completedFeePercent.value = settings.completedFeePercent ?? 1;
       refusedFeePercent.value = settings.refusedFeePercent ?? 1;
@@ -5891,6 +5930,7 @@ SETTINGS_HTML = r"""<!doctype html>
         headers: adminHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({
           currency: currency.value,
+          reserveUnit: reserveUnit.value,
           showPrices: showPrices.checked,
           completedFeePercent: completedFeePercent.value,
           refusedFeePercent: refusedFeePercent.value,

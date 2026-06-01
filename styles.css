@@ -334,30 +334,29 @@ h3 {
 
 .inline-signup {
   margin: 0 0 34px;
-  padding: 22px;
+  padding: 24px;
   scroll-margin-top: 176px;
-  background: rgba(255, 255, 255, 0.1);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.07));
   border: 1px solid rgba(242, 193, 107, 0.5);
-  border-radius: 8px;
+  border-radius: 14px;
   box-shadow: var(--shadow);
 }
 
+.inline-signup .eyebrow {
+  margin-bottom: 6px;
+}
+
 .inline-signup h3 {
-  margin-bottom: 16px;
+  margin-bottom: 18px;
   color: var(--white);
+  text-align: center;
+  font-size: 1.48rem;
 }
 
 .inline-signup-form {
   display: grid;
-  gap: 12px;
-}
-
-.inline-signup-form label {
-  display: grid;
-  gap: 6px;
-  color: var(--amber);
-  font-size: 0.9rem;
-  font-weight: 800;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .inline-signup-form input {
@@ -369,6 +368,12 @@ h3 {
   border: 1px solid rgba(242, 193, 107, 0.72);
   border-radius: 8px;
   font: inherit;
+}
+
+.inline-signup-form .primary-action {
+  grid-column: 1 / -1;
+  min-height: 50px;
+  font-size: 1rem;
 }
 
 .inline-signup-result {
@@ -389,19 +394,20 @@ h3 {
 
 .app-downloads {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
 .app-download-card {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
   align-items: center;
   padding: 14px;
   color: var(--ink);
   background: var(--paper);
   border-radius: 8px;
+  text-align: center;
 }
 
 .app-download-card.pending {
@@ -424,8 +430,8 @@ h3 {
 }
 
 .download-qr {
-  width: 92px;
-  height: 92px;
+  width: 132px;
+  height: 132px;
   padding: 4px;
   background: #fff;
   border-radius: 6px;
@@ -1351,17 +1357,30 @@ h3 {
 
   .inline-signup {
     padding: 16px;
-    scroll-margin-top: 214px;
+    scroll-margin-top: 250px;
+  }
+
+  .inline-signup-form {
+    grid-template-columns: 1fr;
+  }
+
+  .app-downloads {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .app-download-card {
-    grid-template-columns: 76px minmax(0, 1fr);
-    gap: 10px;
-    padding: 10px;
+    padding: 10px 8px;
   }
 
   .download-qr {
-    width: 76px;
-    height: 76px;
+    width: min(100%, 112px);
+    height: auto;
+  }
+
+  .app-download-card .secondary-action {
+    min-height: 38px;
+    padding: 0 10px;
+    font-size: 0.76rem;
   }
 }

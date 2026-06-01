@@ -158,7 +158,7 @@
               </div>
               <div class="amount-row">
                 <div><small>К оплате</small><strong>120 PLN</strong></div>
-                <div><small>Резерв</small><strong>40 PLN</strong></div>
+                <div><small>Резерв</small><strong>40 кредитов</strong></div>
               </div>
               <div class="task-card-mini">
                 <strong>Забрать коробки</strong>
@@ -178,9 +178,9 @@
               <p class="eyebrow">Регистрация клиента</p>
               <h3>Создайте аккаунт и скачайте приложение</h3>
               <form class="inline-signup-form" data-signup-role="client">
-                <label>Имя клиента<input name="displayName" autocomplete="name" required></label>
-                <label>Номер телефона<input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+48 000 000 000" required></label>
-                <label>Пароль<input name="password" type="password" autocomplete="new-password" minlength="4" required></label>
+                <input name="displayName" autocomplete="name" placeholder="Имя клиента" aria-label="Имя клиента" data-placeholder="Имя клиента" required>
+                <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
+                <input name="password" type="password" autocomplete="new-password" minlength="4" placeholder="Пароль" aria-label="Пароль" data-placeholder="Пароль" required>
                 <button class="primary-action" type="submit">Зарегистрироваться</button>
               </form>
               <p class="inline-signup-result" data-signup-result hidden></p>
@@ -198,7 +198,7 @@
                   <div>
                     <h3>Приложение клиента для iPhone</h3>
                     <p>Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.</p>
-                    <span class="secondary-action disabled">Скоро для iPhone</span>
+                    <span class="secondary-action disabled">Скачать для iPhone</span>
                   </div>
                 </article>
               </div>
@@ -227,9 +227,9 @@
               <p class="eyebrow">Регистрация сотрудника</p>
               <h3>Создайте аккаунт и скачайте приложение</h3>
               <form class="inline-signup-form" data-signup-role="employee">
-                <label>Имя сотрудника<input name="displayName" autocomplete="name" required></label>
-                <label>Номер телефона<input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="+48 000 000 000" required></label>
-                <label>Пароль<input name="password" type="password" autocomplete="new-password" minlength="4" required></label>
+                <input name="displayName" autocomplete="name" placeholder="Имя сотрудника" aria-label="Имя сотрудника" data-placeholder="Имя сотрудника" required>
+                <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
+                <input name="password" type="password" autocomplete="new-password" minlength="4" placeholder="Пароль" aria-label="Пароль" data-placeholder="Пароль" required>
                 <button class="primary-action" type="submit">Зарегистрироваться</button>
               </form>
               <p class="inline-signup-result" data-signup-result hidden></p>
@@ -247,7 +247,7 @@
                   <div>
                     <h3>Приложение сотрудника для iPhone</h3>
                     <p>Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.</p>
-                    <span class="secondary-action disabled">Скоро для iPhone</span>
+                    <span class="secondary-action disabled">Скачать для iPhone</span>
                   </div>
                 </article>
               </div>
@@ -278,7 +278,7 @@
               </div>
               <div class="amount-row">
                 <div><small>К выплате</small><strong>280 PLN</strong></div>
-                <div><small>Резерв</small><strong>60 PLN</strong></div>
+                <div><small>Резерв</small><strong>60 кредитов</strong></div>
               </div>
               <h3>Доступные задачи</h3>
               <div class="task-card-mini">
@@ -397,6 +397,6 @@
 
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
     <script src="./script.js?v=7"></script>
-    <script src="./language.js?v=3"></script>
+    <script src="./language.js?v=4"></script>
   </body>
 </html>
