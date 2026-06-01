@@ -94,3 +94,72 @@ window.addEventListener("load", () => setTimeout(syncActiveSlide, 120));
 
 syncActiveSlide();
 setTimeout(syncActiveSlide, 180);
+
+const signupMessages = {
+  pl: {
+    registering: "Rejestracja...",
+    success: "Konto utworzone. Numer telefonu jest loginem do aplikacji.",
+    duplicate: "Ten numer telefonu jest już zarejestrowany.",
+    invalid: "Wpisz imię, prawidłowy numer telefonu i hasło składające się z co najmniej 4 znaków.",
+    error: "Nie udało się zarejestrować konta."
+  },
+  en: {
+    registering: "Registering...",
+    success: "Account created. Your phone number is the login for the app.",
+    duplicate: "This phone number is already registered.",
+    invalid: "Enter a name, a valid phone number and a password with at least 4 characters.",
+    error: "Could not register the account."
+  },
+  uk: {
+    registering: "Реєстрація...",
+    success: "Обліковий запис створено. Номер телефону є логіном для застосунку.",
+    duplicate: "Цей номер телефону вже зареєстровано.",
+    invalid: "Введіть ім'я, правильний номер телефону та пароль щонайменше з 4 символів.",
+    error: "Не вдалося зареєструвати обліковий запис."
+  },
+  ru: {
+    registering: "Регистрация...",
+    success: "Аккаунт создан. Номер телефона является логином для приложения.",
+    duplicate: "Этот номер телефона уже зарегистрирован.",
+    invalid: "Введите имя, правильный номер телефона и пароль минимум из 4 символов.",
+    error: "Не удалось зарегистрировать аккаунт."
+  }
+};
+
+function currentSignupMessages() {
+  return signupMessages[localStorage.getItem("presentationLanguage") || "pl"] || signupMessages.pl;
+}
+
+document.querySelectorAll("[data-signup-role]").forEach((form) => {
+  const result = form.parentElement.querySelector("[data-signup-result]");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const messages = currentSignupMessages();
+    const button = form.querySelector("button");
+    button.disabled = true;
+    result.hidden = false;
+    result.className = "inline-signup-result";
+    result.textContent = messages.registering;
+    try {
+      const response = await fetch(`/api/register/${form.dataset.signupRole}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.fromEntries(new FormData(form).entries()))
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        if (data.error === "phone_already_registered") throw new Error(messages.duplicate);
+        if (data.error === "name_phone_password_required") throw new Error(messages.invalid);
+        throw new Error(messages.error);
+      }
+      result.classList.add("success");
+      result.textContent = messages.success;
+      form.reset();
+    } catch (error) {
+      result.classList.add("error");
+      result.textContent = error.message || messages.error;
+    } finally {
+      button.disabled = false;
+    }
+  });
+});

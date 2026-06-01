@@ -294,6 +294,63 @@
     "Я сотрудник": "Я працівник"
   });
 
+  Object.assign(dictionary.pl, {
+    "Регистрация клиента": "Rejestracja klienta",
+    "Регистрация сотрудника": "Rejestracja wykonawcy",
+    "Создайте аккаунт и скачайте приложение": "Załóż konto i pobierz aplikację",
+    "Имя клиента": "Imię klienta",
+    "Имя сотрудника": "Imię wykonawcy",
+    "Номер телефона": "Numer telefonu",
+    "Пароль": "Hasło",
+    "Зарегистрироваться": "Zarejestruj się",
+    "Приложение клиента для Android": "Aplikacja klienta na Androida",
+    "Приложение сотрудника для Android": "Aplikacja wykonawcy na Androida",
+    "Приложение клиента для iPhone": "Aplikacja klienta na iPhone'a",
+    "Приложение сотрудника для iPhone": "Aplikacja wykonawcy na iPhone'a",
+    "Отсканируйте QR-код или скачайте приложение напрямую.": "Zeskanuj kod QR albo pobierz aplikację bezpośrednio.",
+    "Скачать для Android": "Pobierz na Androida",
+    "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "Wersja na iPhone'a jest przygotowywana. Kod QR prowadzi do aktualnych informacji na stronie.",
+    "Скоро для iPhone": "Wkrótce na iPhone'a"
+  });
+
+  Object.assign(dictionary.en, {
+    "Регистрация клиента": "Client registration",
+    "Регистрация сотрудника": "Worker registration",
+    "Создайте аккаунт и скачайте приложение": "Create an account and download the app",
+    "Имя клиента": "Client name",
+    "Имя сотрудника": "Worker name",
+    "Номер телефона": "Phone number",
+    "Пароль": "Password",
+    "Зарегистрироваться": "Register",
+    "Приложение клиента для Android": "Client app for Android",
+    "Приложение сотрудника для Android": "Worker app for Android",
+    "Приложение клиента для iPhone": "Client app for iPhone",
+    "Приложение сотрудника для iPhone": "Worker app for iPhone",
+    "Отсканируйте QR-код или скачайте приложение напрямую.": "Scan the QR code or download the app directly.",
+    "Скачать для Android": "Download for Android",
+    "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "The iPhone version is being prepared. The QR code leads to the latest information on the website.",
+    "Скоро для iPhone": "Coming soon for iPhone"
+  });
+
+  Object.assign(dictionary.uk, {
+    "Регистрация клиента": "Реєстрація клієнта",
+    "Регистрация сотрудника": "Реєстрація працівника",
+    "Создайте аккаунт и скачайте приложение": "Створіть обліковий запис і завантажте застосунок",
+    "Имя клиента": "Ім'я клієнта",
+    "Имя сотрудника": "Ім'я працівника",
+    "Номер телефона": "Номер телефону",
+    "Пароль": "Пароль",
+    "Зарегистрироваться": "Зареєструватися",
+    "Приложение клиента для Android": "Застосунок клієнта для Android",
+    "Приложение сотрудника для Android": "Застосунок працівника для Android",
+    "Приложение клиента для iPhone": "Застосунок клієнта для iPhone",
+    "Приложение сотрудника для iPhone": "Застосунок працівника для iPhone",
+    "Отсканируйте QR-код или скачайте приложение напрямую.": "Відскануйте QR-код або завантажте застосунок безпосередньо.",
+    "Скачать для Android": "Завантажити для Android",
+    "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "Версія для iPhone готується. QR-код веде до актуальної інформації на сайті.",
+    "Скоро для iPhone": "Незабаром для iPhone"
+  });
+
   const originalText = new WeakMap();
   const languageSelect = document.querySelector("#presentationLanguage");
 

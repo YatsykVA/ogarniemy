@@ -512,9 +512,11 @@ class App(BaseHTTPRequestHandler):
         if path == "/":
             relative_path = "index.html"
         elif path == "/client":
-            relative_path = "client.html"
+            self.send_redirect("/#client-signup")
+            return
         elif path == "/employee":
-            relative_path = "employee.html"
+            self.send_redirect("/#employee-signup")
+            return
         elif path in {"/styles.css", "/script.js", "/language.js", "/signup.css", "/signup.js"} or path.startswith("/assets/") or path.startswith("/downloads/"):
             relative_path = path.lstrip("/")
         elif path == "/admin":
@@ -554,10 +556,10 @@ class App(BaseHTTPRequestHandler):
             self.send_static_file(path.lstrip("/"))
             return
         if path == "/client":
-            self.send_static_file("client.html")
+            self.send_redirect("/#client-signup")
             return
         if path == "/employee":
-            self.send_static_file("employee.html")
+            self.send_redirect("/#employee-signup")
             return
         if path == "/admin":
             self.send_redirect("/server")
@@ -748,11 +750,12 @@ class App(BaseHTTPRequestHandler):
     def handle_login(self):
         data = self.read_json()
         login = str(data.get("login", "")).strip()
+        phone = normalize_phone(login)
         password = str(data.get("password", ""))
         conn = db()
         row = conn.execute(
-            "select * from users where login = ? and deleted_at is null",
-            (login,),
+            "select * from users where (login = ? or phone = ?) and deleted_at is null",
+            (login, phone),
         ).fetchone()
         if not row or row["password_hash"] != password_hash(password, row["salt"]):
             conn.close()
@@ -819,22 +822,16 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "name_phone_password_required"}, 400)
             return
         conn = db()
-        exists = conn.execute(
-            "select id from clients where phone = ? and deleted_at is null",
-            (phone,),
-        ).fetchone()
+        exists = conn.execute("select id from clients where login = ?", (phone,)).fetchone()
         if exists:
             conn.close()
             self.send_json({"error": "phone_already_registered"}, 409)
             return
-        login = f"client-{secrets.token_hex(4)}"
-        while conn.execute("select id from clients where login = ?", (login,)).fetchone():
-            login = f"client-{secrets.token_hex(4)}"
-        create_client(conn, login, password, display_name)
-        conn.execute("update clients set phone = ? where login = ?", (phone, login))
+        create_client(conn, phone, password, display_name)
+        conn.execute("update clients set phone = ? where login = ?", (phone, phone))
         conn.commit()
         conn.close()
-        self.send_json({"ok": True, "login": login}, 201)
+        self.send_json({"ok": True, "login": phone}, 201)
 
     def handle_public_employee_registration(self):
         data = self.read_json()
@@ -1748,7 +1745,7 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "admin_unauthorized"}, 401)
             return
         data = self.read_json()
-        login = str(data.get("login", "")).strip()
+        login = normalize_phone(data.get("login", ""))
         password = str(data.get("password", "")).strip()
         display_name = str(data.get("displayName", "")).strip()
         if not login or not password or not display_name:
@@ -1764,6 +1761,7 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "login_already_exists"}, 409)
             return
         create_user(conn, login, password, display_name)
+        conn.execute("update users set phone = ? where login = ?", (login, login))
         conn.commit()
         user_id = conn.execute("select id from users where login = ?", (login,)).fetchone()["id"]
         conn.close()
@@ -1843,7 +1841,7 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "admin_unauthorized"}, 401)
             return
         data = self.read_json()
-        login = str(data.get("login", "")).strip()
+        login = normalize_phone(data.get("login", ""))
         password = str(data.get("password", "")).strip()
         display_name = str(data.get("displayName", "")).strip()
         if not login or not password or not display_name:
@@ -1859,6 +1857,7 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "login_already_exists"}, 409)
             return
         create_client(conn, login, password, display_name)
+        conn.execute("update clients set phone = ? where login = ?", (login, login))
         conn.commit()
         client_id = conn.execute("select id from clients where login = ?", (login,)).fetchone()["id"]
         conn.close()
@@ -1878,7 +1877,7 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "bad_client_id"}, 400)
             return
         data = self.read_json()
-        login = str(data.get("login", "")).strip()
+        login = normalize_phone(data.get("login", ""))
         display_name = str(data.get("displayName", data.get("display_name", ""))).strip()
         password = str(data.get("password", "")).strip()
         if not login or not display_name:
@@ -1904,14 +1903,14 @@ class App(BaseHTTPRequestHandler):
         if password:
             salt = secrets.token_hex(16)
             conn.execute(
-                "update clients set login = ?, display_name = ?, password_hash = ?, salt = ? where id = ?",
-                (login, display_name, password_hash(password, salt), salt, client_id),
+                "update clients set login = ?, phone = ?, display_name = ?, password_hash = ?, salt = ? where id = ?",
+                (login, login, display_name, password_hash(password, salt), salt, client_id),
             )
             conn.execute("delete from client_tokens where client_id = ?", (client_id,))
         else:
             conn.execute(
-                "update clients set login = ?, display_name = ? where id = ?",
-                (login, display_name, client_id),
+                "update clients set login = ?, phone = ?, display_name = ? where id = ?",
+                (login, login, display_name, client_id),
             )
         conn.commit()
         conn.close()
@@ -1961,7 +1960,7 @@ class App(BaseHTTPRequestHandler):
             return
 
         data = self.read_json()
-        login = str(data.get("login", "")).strip()
+        login = normalize_phone(data.get("login", ""))
         display_name = str(data.get("displayName", "")).strip()
         password = str(data.get("password", "")).strip()
         if not login or not display_name:
@@ -1991,16 +1990,16 @@ class App(BaseHTTPRequestHandler):
             conn.execute(
                 """
                 update users
-                set login = ?, display_name = ?, password_hash = ?, salt = ?
+                set login = ?, phone = ?, display_name = ?, password_hash = ?, salt = ?
                 where id = ?
                 """,
-                (login, display_name, password_hash(password, salt), salt, user_id),
+                (login, login, display_name, password_hash(password, salt), salt, user_id),
             )
             conn.execute("delete from tokens where user_id = ?", (user_id,))
         else:
             conn.execute(
-                "update users set login = ?, display_name = ? where id = ?",
-                (login, display_name, user_id),
+                "update users set login = ?, phone = ?, display_name = ? where id = ?",
+                (login, login, display_name, user_id),
             )
         conn.commit()
         conn.close()
@@ -4610,7 +4609,7 @@ USERS_HTML = r"""<!doctype html>
     <button class="secondary" type="button" onclick="refreshUsersList()" data-i18n="refreshList">Обновить список</button>
     <form id="userForm">
       <input id="userDisplayName" data-placeholder="employeeName" placeholder="Имя сотрудника" required>
-      <input id="userLogin" data-placeholder="login" placeholder="Логин" required>
+      <input id="userLogin" placeholder="Номер телефона" required>
       <input id="userPassword" data-placeholder="password" placeholder="Пароль" required>
       <button data-i18n="add">Добавить</button>
     </form>
@@ -4713,7 +4712,7 @@ USERS_HTML = r"""<!doctype html>
           <div class="userHeader">
             <div>
               <strong>${escapeHtml(u.displayName)}</strong>
-              <div class="meta">${texts[language].login}: ${escapeHtml(u.login)}${u.phone ? " · Телефон: " + escapeHtml(u.phone) : ""} · ${texts[language].tasks}: ${u.taskCount}</div>
+              <div class="meta">Телефон: ${escapeHtml(u.phone || u.login)} · ${texts[language].tasks}: ${u.taskCount}</div>
             </div>
             <div class="userActions">
               ${appSettings.showPrices ? `<div class="userMoneyMini"><strong>${formatMoney(u.payoutPrice ?? u.totals?.payoutPrice ?? 0)}</strong><span>${texts[language].payout}</span></div>` : ""}
@@ -4725,7 +4724,7 @@ USERS_HTML = r"""<!doctype html>
           </div>
           <form class="editForm" id="edit-${u.id}" style="display:none" onsubmit="saveUser(event, ${u.id})">
             <input name="displayName" value="${escapeAttr(u.displayName)}" placeholder="${texts[language].employeeName}" required>
-            <input name="login" value="${escapeAttr(u.login)}" placeholder="${texts[language].login}" required>
+            <input name="login" value="${escapeAttr(u.phone || u.login)}" placeholder="Номер телефона" required>
             <input name="password" value="" placeholder="${texts[language].newPassword}">
             <button>${texts[language].save}</button>
             <button class="danger" type="button" onclick="deleteUser(${u.id})">${texts[language].deleteEmployee}</button>
@@ -5128,7 +5127,7 @@ CLIENTS_HTML = r"""<!doctype html>
     <button class="secondary" type="button" onclick="refreshClientsList()">Обновить список</button>
     <form id="clientForm">
       <input id="clientDisplayName" placeholder="Имя клиента" required>
-      <input id="clientLogin" placeholder="Логин" required>
+      <input id="clientLogin" placeholder="Номер телефона" required>
       <input id="clientPassword" placeholder="Пароль" required>
       <button>Добавить</button>
     </form>
@@ -5219,7 +5218,7 @@ CLIENTS_HTML = r"""<!doctype html>
           <div class="clientHeader">
             <div>
               <strong>${escapeHtml(client.displayName)}</strong>
-              <div class="meta">Логин: ${escapeHtml(client.login)}${client.phone ? " · Телефон: " + escapeHtml(client.phone) : ""} · Заданий: ${client.taskCount}</div>
+              <div class="meta">Телефон: ${escapeHtml(client.phone || client.login)} · Заданий: ${client.taskCount}</div>
             </div>
             <div class="actions">
               <div class="clientMoneyMini"><strong>${formatMoney(client.totalPrice || 0)}</strong><span>Сумма к оплате</span></div>
@@ -5231,7 +5230,7 @@ CLIENTS_HTML = r"""<!doctype html>
           </div>
           <form class="editForm" id="edit-${client.id}" style="display:none" onsubmit="saveClient(event, ${client.id})">
             <input name="displayName" value="${escapeAttr(client.displayName)}" placeholder="Имя клиента" required>
-            <input name="login" value="${escapeAttr(client.login)}" placeholder="Логин" required>
+            <input name="login" value="${escapeAttr(client.phone || client.login)}" placeholder="Номер телефона" required>
             <input name="password" value="" placeholder="Новый пароль, если нужно">
             <button>Сохранить</button>
             <button class="danger" type="button" onclick="deleteClient(${client.id})">Удалить клиента</button>
