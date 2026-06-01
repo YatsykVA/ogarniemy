@@ -89,8 +89,20 @@ window.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("scroll", syncActiveSlide, { passive: true });
-window.addEventListener("hashchange", () => setTimeout(syncActiveSlide, 80));
-window.addEventListener("load", () => setTimeout(syncActiveSlide, 120));
+function scrollToHashTarget() {
+  if (!window.location.hash) return;
+  const target = document.querySelector(window.location.hash);
+  if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+window.addEventListener("hashchange", () => {
+  setTimeout(scrollToHashTarget, 40);
+  setTimeout(syncActiveSlide, 120);
+});
+window.addEventListener("load", () => {
+  setTimeout(scrollToHashTarget, 180);
+  setTimeout(syncActiveSlide, 260);
+});
 
 syncActiveSlide();
 setTimeout(syncActiveSlide, 180);
