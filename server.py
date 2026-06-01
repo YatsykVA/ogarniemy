@@ -415,6 +415,11 @@ class App(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_redirect(self, location, status=308):
+        self.send_response(status)
+        self.send_header("Location", location)
+        self.end_headers()
+
     def send_static_file(self, relative_path, cache_seconds=0):
         file_path = os.path.abspath(os.path.join(ROOT, relative_path))
         if os.path.commonpath([ROOT, file_path]) != ROOT or not os.path.isfile(file_path):
@@ -492,6 +497,9 @@ class App(BaseHTTPRequestHandler):
             relative_path = "index.html"
         elif path in {"/styles.css", "/script.js", "/language.js"} or path.startswith("/assets/"):
             relative_path = path.lstrip("/")
+        elif path == "/admin":
+            self.send_redirect("/server")
+            return
         else:
             self.send_response(404)
             self.end_headers()
@@ -523,6 +531,9 @@ class App(BaseHTTPRequestHandler):
             self.send_static_file(path.lstrip("/"), 7 * 24 * 60 * 60)
             return
         if path == "/admin":
+            self.send_redirect("/server")
+            return
+        if path == "/server":
             self.send_html(INDEX_HTML)
             return
         if path == "/users":
@@ -3770,7 +3781,7 @@ INDEX_HTML = r"""<!doctype html>
       </select>
     </div>
     <h1 data-i18n="serverTitle">Задания</h1>
-    <nav><a href="/">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <form id="form">
@@ -4221,7 +4232,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Расчеты сотрудников</h1>
-    <nav><a href="/">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <section id="settlements"></section>
@@ -4506,7 +4517,7 @@ USERS_HTML = r"""<!doctype html>
       </select>
     </div>
     <h1 data-i18n="employees">Сотрудники</h1>
-    <nav><a href="/">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <button class="secondary" type="button" onclick="refreshUsersList()" data-i18n="refreshList">Обновить список</button>
@@ -5024,7 +5035,7 @@ CLIENTS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Клиенты</h1>
-    <nav><a href="/">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <button class="secondary" type="button" onclick="refreshClientsList()">Обновить список</button>
@@ -5434,7 +5445,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Расчеты клиентов</h1>
-    <nav><a href="/">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <section id="items"></section>
@@ -5671,7 +5682,7 @@ SETTINGS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Настройки</h1>
-    <nav><a href="/">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <form id="settingsForm">
