@@ -845,6 +845,10 @@ h3 {
   align-items: start;
 }
 
+.client-band .phone-stage {
+  zoom: 0.85;
+}
+
 .phone-stage.single {
   grid-template-columns: minmax(280px, 360px);
   justify-content: center;
@@ -1340,6 +1344,10 @@ h3 {
   .timeline,
   .metrics {
     grid-template-columns: 1fr;
+  }
+
+  .client-band .phone-stage {
+    zoom: 1;
   }
 
   .phone-shot {
