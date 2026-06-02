@@ -4324,7 +4324,7 @@ INDEX_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
+      const labels = { credits: "CRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
@@ -4495,7 +4495,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
+      const labels = { credits: "CRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
@@ -5076,7 +5076,7 @@ USERS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
+      const labels = { credits: "CRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function calculationStatus(item) {
@@ -5311,7 +5311,7 @@ CLIENTS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
+      const labels = { credits: "CRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
@@ -5722,7 +5722,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
+      const labels = { credits: "CRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function calculationStatus(item) {
@@ -5934,7 +5934,7 @@ SETTINGS_HTML = r"""<!doctype html>
       </label>
       <label>Единица резерва
         <select id="reserveUnit">
-          <option value="credits">KRDT</option>
+          <option value="credits">CRDT</option>
           <option value="tokens">TKN</option>
           <option value="coins">KOIN</option>
           <option value="points">BAL</option>
