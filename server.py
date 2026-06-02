@@ -21,7 +21,7 @@ TRANSLATION_CACHE = {}
 SUPPORTED_LANGUAGES = {"en", "uk", "ru", "pl"}
 RETENTION_DEFAULT_DAYS = 365
 RETENTION_MIN_DAYS = 1
-RETENTION_MAX_DAYS = 1000
+RETENTION_MAX_DAYS = 365
 CLEANUP_INTERVAL_SECONDS = 60 * 60
 
 
@@ -115,9 +115,11 @@ def compose_address(city="", postal_code="", street="", house="", apartment="", 
     street = str(street or "").strip()
     house = str(house or "").strip()
     apartment = str(apartment or "").strip()
-    parts = [part for part in (postal_code, city, street, house) if part]
-    if apartment:
-        parts.append(f"кв. {apartment}")
+    parts = [part for part in (postal_code, city, street) if part]
+    if house:
+        parts.append(f"{house}/{apartment}" if apartment else house)
+    elif apartment:
+        parts.append(apartment)
     return ", ".join(parts) if parts else str(fallback or "").strip()
 
 
@@ -181,6 +183,7 @@ def cleanup_expired_data():
     try:
         now = int(time.time())
         completed_cutoff = now - retention_days(conn, "completed_tasks_retention_days") * 86400
+        unaccepted_cutoff = now - retention_days(conn, "unaccepted_tasks_retention_days") * 86400
         employee_settlement_cutoff = now - retention_days(conn, "employee_settlements_retention_days") * 86400
         client_settlement_cutoff = now - retention_days(conn, "client_settlements_retention_days") * 86400
 
@@ -194,6 +197,16 @@ def cleanup_expired_data():
             (completed_cutoff,),
         ).fetchall()
         delete_tasks_by_ids(conn, [row["id"] for row in task_rows])
+        unaccepted_task_rows = conn.execute(
+            """
+            select id
+            from tasks
+            where status = 'new'
+              and created_at < ?
+            """,
+            (unaccepted_cutoff,),
+        ).fetchall()
+        delete_tasks_by_ids(conn, [row["id"] for row in unaccepted_task_rows])
         conn.execute("delete from settlements where created_at < ?", (employee_settlement_cutoff,))
         conn.execute("delete from client_settlements where created_at < ?", (client_settlement_cutoff,))
         conn.commit()
@@ -984,6 +997,7 @@ class App(BaseHTTPRequestHandler):
             "completedFeePercent": float(get_setting(conn, "completed_fee_percent") or "1"),
             "refusedFeePercent": float(get_setting(conn, "refused_fee_percent") or "1"),
             "completedTasksRetentionDays": retention_days(conn, "completed_tasks_retention_days"),
+            "unacceptedTasksRetentionDays": retention_days(conn, "unaccepted_tasks_retention_days"),
             "employeeSettlementsRetentionDays": retention_days(conn, "employee_settlements_retention_days"),
             "clientSettlementsRetentionDays": retention_days(conn, "client_settlements_retention_days"),
             "feedbackPhone": get_setting(conn, "feedback_phone"),
@@ -1020,6 +1034,7 @@ class App(BaseHTTPRequestHandler):
         completed_fee_percent = parse_price(data.get("completedFeePercent", 1))
         refused_fee_percent = parse_price(data.get("refusedFeePercent", 1))
         completed_tasks_retention_days = parse_retention_days(data.get("completedTasksRetentionDays", RETENTION_DEFAULT_DAYS))
+        unaccepted_tasks_retention_days = parse_retention_days(data.get("unacceptedTasksRetentionDays", RETENTION_DEFAULT_DAYS))
         employee_settlements_retention_days = parse_retention_days(data.get("employeeSettlementsRetentionDays", RETENTION_DEFAULT_DAYS))
         client_settlements_retention_days = parse_retention_days(data.get("clientSettlementsRetentionDays", RETENTION_DEFAULT_DAYS))
         if completed_fee_percent is None or completed_fee_percent < 0 or completed_fee_percent > 100:
@@ -1033,6 +1048,9 @@ class App(BaseHTTPRequestHandler):
             return
         if completed_tasks_retention_days is None:
             self.send_json({"error": "bad_completed_tasks_retention_days"}, 400)
+            return
+        if unaccepted_tasks_retention_days is None:
+            self.send_json({"error": "bad_unaccepted_tasks_retention_days"}, 400)
             return
         if employee_settlements_retention_days is None:
             self.send_json({"error": "bad_employee_settlements_retention_days"}, 400)
@@ -1060,6 +1078,10 @@ class App(BaseHTTPRequestHandler):
         conn.execute(
             "insert into settings(key, value) values('completed_tasks_retention_days', ?) on conflict(key) do update set value = excluded.value",
             (str(completed_tasks_retention_days),),
+        )
+        conn.execute(
+            "insert into settings(key, value) values('unaccepted_tasks_retention_days', ?) on conflict(key) do update set value = excluded.value",
+            (str(unaccepted_tasks_retention_days),),
         )
         conn.execute(
             "insert into settings(key, value) values('employee_settlements_retention_days', ?) on conflict(key) do update set value = excluded.value",
@@ -2175,10 +2197,12 @@ class App(BaseHTTPRequestHandler):
 
         rows = conn.execute(
             """
-            select id, title, description, phone, address, city, postal_code, street, house, apartment, price, payment_method, status, created_at, decided_at, accepted_at, completed_at
+            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price, tasks.payment_method, tasks.status, tasks.created_at, tasks.decided_at, tasks.accepted_at, tasks.completed_at,
+                   tasks.client_id, clients.login as client_login, clients.display_name as client_name
             from tasks
-            where assigned_to = ? and settlement_id is null
-            order by coalesce(decided_at, created_at) desc, id desc
+            left join clients on clients.id = tasks.client_id
+            where tasks.assigned_to = ? and tasks.settlement_id is null
+            order by coalesce(tasks.decided_at, tasks.created_at) desc, tasks.id desc
             """,
             (user_id,),
         ).fetchall()
@@ -2186,9 +2210,11 @@ class App(BaseHTTPRequestHandler):
             """
             select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price, tasks.payment_method,
                    'refused' as status, tasks.created_at, task_events.created_at as decided_at,
-                   tasks.accepted_at, tasks.completed_at
+                   tasks.accepted_at, tasks.completed_at, tasks.client_id,
+                   clients.login as client_login, clients.display_name as client_name
             from task_events
             join tasks on tasks.id = task_events.task_id
+            left join clients on clients.id = tasks.client_id
             where task_events.user_id = ?
               and task_events.event = 'refused'
               and task_events.settlement_id is null
@@ -2235,6 +2261,7 @@ class App(BaseHTTPRequestHandler):
                 snapshot = json.loads(settlement["snapshot_json"])
             except Exception:
                 snapshot = {}
+            enrich_snapshot_task_sources(snapshot)
             snapshot["id"] = settlement["id"]
             snapshot["createdAt"] = settlement["created_at"]
             history.append(snapshot)
@@ -2560,6 +2587,7 @@ class App(BaseHTTPRequestHandler):
                 snapshot = json.loads(row["snapshot_json"])
             except Exception:
                 snapshot = {}
+            enrich_snapshot_task_sources(snapshot)
             settlements.append(
                 {
                     "id": row["id"],
@@ -2687,11 +2715,14 @@ class App(BaseHTTPRequestHandler):
             select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price,
                    tasks.payment_method, tasks.status, tasks.created_at, tasks.decided_at,
                    tasks.accepted_at, tasks.completed_at,
-                   tasks.assigned_to,
+                   tasks.assigned_to, tasks.client_id,
                    users.display_name as assigned_to_name,
-                   users.login as assigned_to_login
+                   users.login as assigned_to_login,
+                   clients.login as client_login,
+                   clients.display_name as client_name
             from tasks
             left join users on users.id = tasks.assigned_to
+            left join clients on clients.id = tasks.client_id
             where tasks.client_id = ? and tasks.client_settlement_id is null
             order by tasks.created_at desc, tasks.id desc
             """,
@@ -3253,6 +3284,48 @@ def row_value(row, key, default=""):
         return default
 
 
+def enrich_snapshot_task_sources(snapshot):
+    tasks = []
+    for key in ("completed", "active", "new", "refused", "other"):
+        tasks.extend(task for task in snapshot.get(key, []) or [] if isinstance(task, dict))
+    task_ids = sorted({task.get("id") for task in tasks if task.get("id")})
+    if not task_ids:
+        return
+    placeholders = ",".join("?" for _ in task_ids)
+    conn = db()
+    rows = conn.execute(
+        f"""
+        select tasks.id, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment,
+               tasks.client_id, clients.login as client_login, clients.display_name as client_name
+        from tasks
+        left join clients on clients.id = tasks.client_id
+        where tasks.id in ({placeholders})
+        """,
+        task_ids,
+    ).fetchall()
+    conn.close()
+    by_id = {row["id"]: row for row in rows}
+    for task in tasks:
+        row = by_id.get(task.get("id"))
+        if not row:
+            continue
+        client_id = row["client_id"]
+        client_name = row["client_name"] or ""
+        task["clientId"] = client_id
+        task["clientName"] = "" if is_placeholder_text(client_name) else client_name
+        task["clientLogin"] = row["client_login"] or ""
+        task["source"] = "client" if client_id else "dispatcher"
+        task["sourceName"] = task["clientName"] if client_id else ""
+        task["address"] = compose_address(
+            row["city"],
+            row["postal_code"],
+            row["street"],
+            row["house"],
+            row["apartment"],
+            row["address"],
+        )
+
+
 def task_json(row, lang="ru", hide_private=False):
     client_name = ""
     assigned_to_name = ""
@@ -3354,6 +3427,9 @@ def task_report_json(row, lang="ru"):
     payment_method = "card"
     assigned_to_name = ""
     assigned_to_login = ""
+    client_id = row_value(row, "client_id", None)
+    client_name = row_value(row, "client_name")
+    client_login = row_value(row, "client_login")
     try:
         payment_method = normalize_payment_method(row["payment_method"])
     except (KeyError, IndexError):
@@ -3381,7 +3457,14 @@ def task_report_json(row, lang="ru"):
         "title": translate_text(row["title"], lang),
         "description": translate_text(row["description"], lang),
         "phone": row["phone"],
-        "address": row["address"],
+        "address": compose_address(
+            row_value(row, "city"),
+            row_value(row, "postal_code"),
+            row_value(row, "street"),
+            row_value(row, "house"),
+            row_value(row, "apartment"),
+            row["address"],
+        ),
         "city": row_value(row, "city"),
         "postalCode": row_value(row, "postal_code"),
         "street": row_value(row, "street"),
@@ -3397,6 +3480,11 @@ def task_report_json(row, lang="ru"):
         "status": row["status"],
         "assignedToName": assigned_to_name,
         "assignedToLogin": assigned_to_login,
+        "clientId": client_id,
+        "clientName": "" if is_placeholder_text(client_name) else client_name,
+        "clientLogin": client_login,
+        "source": "client" if client_id else "dispatcher",
+        "sourceName": ("" if is_placeholder_text(client_name) else client_name) if client_id else "",
         "createdAt": row["created_at"],
         "decidedAt": row["decided_at"],
         "acceptedAt": accepted_at,
@@ -3661,7 +3749,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Расчеты сотрудников": "Employee payments", "Расчеты клиентов": "Client payments", "Настройки": "Settings",
       "Название задания": "Task name", "Название": "Name", "Задание": "Task", "Описание": "Description",
       "Номер телефона": "Phone number", "Номер": "Phone", "Телефона": "Number", "Телефон": "Phone",
-      "Адрес": "Address", "Цена": "Price", "Карта": "Card", "Наличные": "Cash", "Оплата": "Payment",
+      "Адрес": "Address", "Город": "City", "Код": "Postal code", "Улица": "Street", "Дом": "House", "Квартира": "Apartment", "Цена": "Price", "Карта": "Card", "Наличные": "Cash", "Оплата": "Payment",
       "Добавить": "Add", "Редактировать": "Edit", "Сохранить": "Save", "Отмена": "Cancel", "Удалить": "Delete",
       "Начать заново": "Start again", "Обновить список": "Refresh list", "Имя сотрудника": "Employee name",
       "Имя клиента": "Client name", "Логин": "Login", "Пароль": "Password", "Новый пароль, если нужно": "New password if needed",
@@ -3683,7 +3771,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Удержание за наличные из резерва": "Cash job fee from reserve", "Удержание": "Fee",
       "Процент с выполненных работ, который мы удерживаем себе": "Percent withheld from completed jobs",
       "Процент с отказанных или отмененных работ, который мы удерживаем себе": "Percent withheld from refused or cancelled jobs",
-      "Валюта": "Currency", "Показывать цены и суммы": "Show prices and amounts", "Телефон обратной связи": "Feedback phone",
+      "Валюта": "Currency", "Показывать цены и суммы": "Show prices and amounts", "Сколько дней хранить непринятые задания": "How many days to keep unaccepted tasks", "Телефон обратной связи": "Feedback phone",
       "E-mail обратной связи": "Feedback e-mail", "Обычный адрес": "Regular address", "Telegram": "Telegram", "WhatsApp": "WhatsApp",
       "Изменить пароль": "Change password", "Старый пароль": "Old password", "Повторите старый пароль": "Repeat old password",
       "Введите новый пароль": "Enter new password", "Сбросить пароль": "Reset password", "Настройки сохранены": "Settings saved",
@@ -3705,7 +3793,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Расчеты сотрудников": "Розрахунки співробітників", "Расчеты клиентов": "Розрахунки клієнтів", "Настройки": "Налаштування",
       "Название задания": "Назва завдання", "Название": "Назва", "Задание": "Завдання", "Описание": "Опис",
       "Номер телефона": "Номер телефону", "Номер": "Номер", "Телефона": "Телефону", "Телефон": "Телефон",
-      "Адрес": "Адреса", "Цена": "Ціна", "Карта": "Картка", "Наличные": "Готівка", "Оплата": "Оплата",
+      "Адрес": "Адреса", "Город": "Місто", "Код": "Код", "Улица": "Вулиця", "Дом": "Будинок", "Квартира": "Квартира", "Цена": "Ціна", "Карта": "Картка", "Наличные": "Готівка", "Оплата": "Оплата",
       "Добавить": "Додати", "Редактировать": "Редагувати", "Сохранить": "Зберегти", "Отмена": "Скасувати", "Удалить": "Видалити",
       "Начать заново": "Почати заново", "Обновить список": "Оновити список", "Имя сотрудника": "Ім'я співробітника",
       "Имя клиента": "Ім'я клієнта", "Логин": "Логін", "Пароль": "Пароль", "Новый пароль, если нужно": "Новий пароль, якщо потрібно",
@@ -3727,7 +3815,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Удержание за наличные из резерва": "Утримання за готівку з резерву", "Удержание": "Утримання",
       "Процент с выполненных работ, который мы удерживаем себе": "Відсоток з виконаних робіт, який ми утримуємо собі",
       "Процент с отказанных или отмененных работ, который мы удерживаем себе": "Відсоток з відмовлених або скасованих робіт, який ми утримуємо собі",
-      "Валюта": "Валюта", "Показывать цены и суммы": "Показувати ціни та суми", "Телефон обратной связи": "Телефон зворотного зв'язку",
+      "Валюта": "Валюта", "Показывать цены и суммы": "Показувати ціни та суми", "Сколько дней хранить непринятые задания": "Скільки днів зберігати неприйняті завдання", "Телефон обратной связи": "Телефон зворотного зв'язку",
       "E-mail обратной связи": "E-mail зворотного зв'язку", "Обычный адрес": "Звичайна адреса", "Telegram": "Telegram", "WhatsApp": "WhatsApp",
       "Изменить пароль": "Змінити пароль", "Старый пароль": "Старий пароль", "Повторите старый пароль": "Повторіть старий пароль",
       "Введите новый пароль": "Введіть новий пароль", "Сбросить пароль": "Скинути пароль", "Настройки сохранены": "Налаштування збережено",
@@ -3749,7 +3837,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Расчеты сотрудников": "Rozliczenia pracowników", "Расчеты клиентов": "Rozliczenia klientów", "Настройки": "Ustawienia",
       "Название задания": "Nazwa zadania", "Название": "Nazwa", "Задание": "Zadanie", "Описание": "Opis",
       "Номер телефона": "Numer telefonu", "Номер": "Numer", "Телефона": "Telefonu", "Телефон": "Telefon",
-      "Адрес": "Adres", "Цена": "Cena", "Карта": "Karta", "Наличные": "Gotówka", "Оплата": "Płatność",
+      "Адрес": "Adres", "Город": "Miasto", "Код": "Kod", "Улица": "Ulica", "Дом": "Dom", "Квартира": "Mieszkanie", "Цена": "Cena", "Карта": "Karta", "Наличные": "Gotówka", "Оплата": "Płatność",
       "Добавить": "Dodaj", "Редактировать": "Edytuj", "Сохранить": "Zapisz", "Отмена": "Anuluj", "Удалить": "Usuń",
       "Начать заново": "Zacznij od nowa", "Обновить список": "Odśwież listę", "Имя сотрудника": "Imię pracownika",
       "Имя клиента": "Imię klienta", "Логин": "Login", "Пароль": "Hasło", "Новый пароль, если нужно": "Nowe hasło, jeśli potrzebne",
@@ -3771,7 +3859,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Удержание за наличные из резерва": "Potrącenie za gotówkę z rezerwy", "Удержание": "Potrącenie",
       "Процент с выполненных работ, который мы удерживаем себе": "Procent z wykonanych prac, który zatrzymujemy",
       "Процент с отказанных или отмененных работ, который мы удерживаем себе": "Procent z odmówionych lub anulowanych prac, który zatrzymujemy",
-      "Валюта": "Waluta", "Показывать цены и суммы": "Pokazywać ceny i kwoty", "Телефон обратной связи": "Telefon kontaktowy",
+      "Валюта": "Waluta", "Показывать цены и суммы": "Pokazywać ceny i kwoty", "Сколько дней хранить непринятые задания": "Ile dni przechowywać nieprzyjęte zadania", "Телефон обратной связи": "Telefon kontaktowy",
       "E-mail обратной связи": "E-mail kontaktowy", "Обычный адрес": "Zwykły adres", "Telegram": "Telegram", "WhatsApp": "WhatsApp",
       "Изменить пароль": "Zmień hasło", "Старый пароль": "Stare hasło", "Повторите старый пароль": "Powtórz stare hasło",
       "Введите новый пароль": "Wpisz nowe hasło", "Сбросить пароль": "Resetuj hasło", "Настройки сохранены": "Ustawienia zapisane",
@@ -3945,6 +4033,7 @@ INDEX_HTML = r"""<!doctype html>
     select, select option { color: #60717d; font-weight: 400; }
     #price, #paymentMethod { width: 100%; }
     #price { text-align: center; }
+    .addressRow { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(110px, 1fr)); grid-column: 1 / -1; }
     button { background: linear-gradient(135deg, var(--teal), #2563eb); color: white; border: 0; cursor: pointer; font-weight: 700; box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22); }
     #form > button { height: 88px; display: flex; align-items: center; justify-content: center; text-align: center; }
     .secondary { background: #fff0bf; color: #4a3200; box-shadow: none; margin-top: 8px; }
@@ -3968,7 +4057,7 @@ INDEX_HTML = r"""<!doctype html>
     .status { display: inline-block; padding: 5px 10px; border-radius: 999px; background: #fff0bf; color: #6b4300; font-weight: 700; }
     .status.accepted { background: #dcfce7; color: #166534; }
     @media (max-width: 980px) { nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    @media (max-width: 760px) { form, .editTask { grid-template-columns: 1fr; } .task h3 { padding-right: 0; } .taskDates { position: static; margin: 0 0 10px auto; } }
+    @media (max-width: 760px) { form, .editTask, .addressRow { grid-template-columns: 1fr; } .task h3 { padding-right: 0; } .taskDates { position: static; margin: 0 0 10px auto; } }
   </style>
 </head>
 <body class="locked">
@@ -3989,11 +4078,13 @@ INDEX_HTML = r"""<!doctype html>
       <textarea id="title" data-placeholder="taskTitle" placeholder="Название&#10;Задание" required></textarea>
       <input id="description" data-placeholder="description" placeholder="Описание">
       <textarea id="phone" placeholder="Номер&#10;Телефона" inputmode="tel"></textarea>
-      <input id="city" placeholder="Город" required>
-      <input id="postalCode" placeholder="Код">
-      <input id="street" placeholder="Улица" required>
-      <input id="house" placeholder="Дом">
-      <input id="apartment" placeholder="Квартира">
+      <div class="addressRow">
+        <input id="city" placeholder="Город" required>
+        <input id="postalCode" placeholder="Код">
+        <input id="street" placeholder="Улица" required>
+        <input id="house" placeholder="Дом">
+        <input id="apartment" placeholder="Квартира">
+      </div>
       <input id="price" data-placeholder="price" placeholder="Цена" inputmode="decimal">
       <select id="paymentMethod">
         <option value="cash">Наличные</option>
@@ -4009,10 +4100,10 @@ INDEX_HTML = r"""<!doctype html>
     let appSettings = { currency: "PLN", reserveUnit: "credits", showPrices: true };
     let clientOptions = [];
     const texts = {
-      ru: { serverTitle: "Задания", openUsers: "Сотрудники", completedTasks: "Выполненные задания", calculations: "Расчеты", changePassword: "Изменить пароль", oldPassword: "Старый пароль", oldPasswordRepeat: "Повторите старый пароль", newPassword: "Введите новый пароль", passwordChanged: "Пароль изменен", changePasswordError: "Не удалось изменить пароль: ", confirmPassword: "Пароль подтверждения", taskTitle: "Название задания", description: "Описание", address: "Адрес", price: "Цена", add: "Добавить", employee: "сотрудник", delete: "Удалить", restart: "Начать заново", confirmDelete: "Удалить это задание?", resetError: "Не удалось вернуть задание: ", deleteError: "Не удалось удалить задание: ", createdAt: "Создано", acceptedAt: "Принято", completedAt: "Выполнено", new: "Новое", accepted: "Принято", declined: "Отклонено", completed: "Выполнено", refused: "Отказался" },
-      en: { serverTitle: "Tasks", openUsers: "Employees", completedTasks: "Completed tasks", calculations: "Calculations", changePassword: "Change password", oldPassword: "Old password", oldPasswordRepeat: "Repeat old password", newPassword: "Enter new password", passwordChanged: "Password changed", changePasswordError: "Could not change password: ", confirmPassword: "Confirmation password", taskTitle: "Task name", description: "Description", address: "Address", price: "Price", add: "Add", employee: "employee", delete: "Delete", restart: "Start again", confirmDelete: "Delete this task?", resetError: "Could not return task: ", deleteError: "Could not delete task: ", createdAt: "Created", acceptedAt: "Accepted", completedAt: "Completed", new: "New", accepted: "Accepted", declined: "Declined", completed: "Completed", refused: "Refused" },
-      uk: { serverTitle: "Завдання", openUsers: "Співробітники", completedTasks: "Виконані завдання", calculations: "Розрахунки", changePassword: "Змінити пароль", oldPassword: "Старий пароль", oldPasswordRepeat: "Повторіть старий пароль", newPassword: "Введіть новий пароль", passwordChanged: "Пароль змінено", changePasswordError: "Не вдалося змінити пароль: ", confirmPassword: "Пароль підтвердження", taskTitle: "Назва завдання", description: "Опис", address: "Адреса", price: "Ціна", add: "Додати", employee: "співробітник", delete: "Видалити", restart: "Почати заново", confirmDelete: "Видалити це завдання?", resetError: "Не вдалося повернути завдання: ", deleteError: "Не вдалося видалити завдання: ", createdAt: "Створено", acceptedAt: "Прийнято", completedAt: "Виконано", new: "Нове", accepted: "Прийнято", declined: "Відхилено", completed: "Виконано", refused: "Відмовився" },
-      pl: { serverTitle: "Zadania", openUsers: "Pracownicy", completedTasks: "Wykonane zadania", calculations: "Rozliczenia", changePassword: "Zmień hasło", oldPassword: "Stare hasło", oldPasswordRepeat: "Powtórz stare hasło", newPassword: "Wpisz nowe hasło", passwordChanged: "Hasło zmienione", changePasswordError: "Nie udało się zmienić hasła: ", confirmPassword: "Hasło potwierdzenia", taskTitle: "Nazwa zadania", description: "Opis", address: "Adres", price: "Cena", add: "Dodaj", employee: "pracownik", delete: "Usuń", restart: "Zacznij od nowa", confirmDelete: "Usunąć to zadanie?", resetError: "Nie udało się przywrócić zadania: ", deleteError: "Nie udało się usunąć zadania: ", createdAt: "Utworzono", acceptedAt: "Przyjęto", completedAt: "Wykonano", new: "Nowe", accepted: "Przyjęte", declined: "Odrzucone", completed: "Wykonane", refused: "Odmówił" }
+      ru: { serverTitle: "Задания", openUsers: "Сотрудники", completedTasks: "Выполненные задания", calculations: "Расчеты", changePassword: "Изменить пароль", oldPassword: "Старый пароль", oldPasswordRepeat: "Повторите старый пароль", newPassword: "Введите новый пароль", passwordChanged: "Пароль изменен", changePasswordError: "Не удалось изменить пароль: ", confirmPassword: "Пароль подтверждения", taskTitle: "Название задания", description: "Описание", city: "Город", postalCode: "Код", street: "Улица", house: "Дом", apartment: "Квартира", address: "Адрес", price: "Цена", add: "Добавить", employee: "сотрудник", delete: "Удалить", restart: "Начать заново", confirmDelete: "Удалить это задание?", resetError: "Не удалось вернуть задание: ", deleteError: "Не удалось удалить задание: ", createdAt: "Создано", acceptedAt: "Принято", completedAt: "Выполнено", new: "Новое", accepted: "Принято", declined: "Отклонено", completed: "Выполнено", refused: "Отказался" },
+      en: { serverTitle: "Tasks", openUsers: "Employees", completedTasks: "Completed tasks", calculations: "Calculations", changePassword: "Change password", oldPassword: "Old password", oldPasswordRepeat: "Repeat old password", newPassword: "Enter new password", passwordChanged: "Password changed", changePasswordError: "Could not change password: ", confirmPassword: "Confirmation password", taskTitle: "Task name", description: "Description", city: "City", postalCode: "Postal code", street: "Street", house: "House", apartment: "Apartment", address: "Address", price: "Price", add: "Add", employee: "employee", delete: "Delete", restart: "Start again", confirmDelete: "Delete this task?", resetError: "Could not return task: ", deleteError: "Could not delete task: ", createdAt: "Created", acceptedAt: "Accepted", completedAt: "Completed", new: "New", accepted: "Accepted", declined: "Declined", completed: "Completed", refused: "Refused" },
+      uk: { serverTitle: "Завдання", openUsers: "Співробітники", completedTasks: "Виконані завдання", calculations: "Розрахунки", changePassword: "Змінити пароль", oldPassword: "Старий пароль", oldPasswordRepeat: "Повторіть старий пароль", newPassword: "Введіть новий пароль", passwordChanged: "Пароль змінено", changePasswordError: "Не вдалося змінити пароль: ", confirmPassword: "Пароль підтвердження", taskTitle: "Назва завдання", description: "Опис", city: "Місто", postalCode: "Код", street: "Вулиця", house: "Будинок", apartment: "Квартира", address: "Адреса", price: "Ціна", add: "Додати", employee: "співробітник", delete: "Видалити", restart: "Почати заново", confirmDelete: "Видалити це завдання?", resetError: "Не вдалося повернути завдання: ", deleteError: "Не вдалося видалити завдання: ", createdAt: "Створено", acceptedAt: "Прийнято", completedAt: "Виконано", new: "Нове", accepted: "Прийнято", declined: "Відхилено", completed: "Виконано", refused: "Відмовився" },
+      pl: { serverTitle: "Zadania", openUsers: "Pracownicy", completedTasks: "Wykonane zadania", calculations: "Rozliczenia", changePassword: "Zmień hasło", oldPassword: "Stare hasło", oldPasswordRepeat: "Powtórz stare hasło", newPassword: "Wpisz nowe hasło", passwordChanged: "Hasło zmienione", changePasswordError: "Nie udało się zmienić hasła: ", confirmPassword: "Hasło potwierdzenia", taskTitle: "Nazwa zadania", description: "Opis", city: "Miasto", postalCode: "Kod", street: "Ulica", house: "Dom", apartment: "Mieszkanie", address: "Adres", price: "Cena", add: "Dodaj", employee: "pracownik", delete: "Usuń", restart: "Zacznij od nowa", confirmDelete: "Usunąć to zadanie?", resetError: "Nie udało się przywrócić zadania: ", deleteError: "Nie udało się usunąć zadania: ", createdAt: "Utworzono", acceptedAt: "Przyjęto", completedAt: "Wykonano", new: "Nowe", accepted: "Przyjęte", declined: "Odrzucone", completed: "Wykonane", refused: "Odmówił" }
     };
     function setLanguage(value) {
       language = value;
@@ -4026,6 +4117,11 @@ INDEX_HTML = r"""<!doctype html>
       document.querySelectorAll("[data-placeholder]").forEach(el => el.placeholder = texts[language][el.dataset.placeholder]);
       title.placeholder = language === "ru" ? "Название\nЗадание" : texts[language].taskTitle;
       phone.placeholder = language === "ru" ? "Номер\nТелефона" : "Phone";
+      city.placeholder = texts[language].city;
+      postalCode.placeholder = texts[language].postalCode;
+      street.placeholder = texts[language].street;
+      house.placeholder = texts[language].house;
+      apartment.placeholder = texts[language].apartment;
     }
     function statusName(status) {
       return texts[language][status] || status;
@@ -4174,11 +4270,13 @@ INDEX_HTML = r"""<!doctype html>
           <input name="title" value="${escapeAttr(task.originalTitle || task.title || "")}" placeholder="${texts[language].taskTitle}" required>
           <input name="description" value="${escapeAttr(task.originalDescription || task.description || "")}" placeholder="${texts[language].description}">
           <input name="phone" value="${escapeAttr(task.originalPhone || task.phone || "")}" placeholder="Номер телефона" inputmode="tel">
-          <input name="city" value="${escapeAttr(task.city || "")}" placeholder="Город" required>
-          <input name="postalCode" value="${escapeAttr(task.postalCode || "")}" placeholder="Код">
-          <input name="street" value="${escapeAttr(task.street || "")}" placeholder="Улица" required>
-          <input name="house" value="${escapeAttr(task.house || "")}" placeholder="Дом">
-          <input name="apartment" value="${escapeAttr(task.apartment || "")}" placeholder="Квартира">
+          <div class="addressRow">
+            <input name="city" value="${escapeAttr(task.city || "")}" placeholder="${texts[language].city}" required>
+            <input name="postalCode" value="${escapeAttr(task.postalCode || "")}" placeholder="${texts[language].postalCode}">
+            <input name="street" value="${escapeAttr(task.street || "")}" placeholder="${texts[language].street}" required>
+            <input name="house" value="${escapeAttr(task.house || "")}" placeholder="${texts[language].house}">
+            <input name="apartment" value="${escapeAttr(task.apartment || "")}" placeholder="${texts[language].apartment}">
+          </div>
           <input name="price" value="${escapeAttr(task.price || "")}" placeholder="${texts[language].price}" inputmode="decimal">
           <select name="paymentMethod">
             <option value="card" ${(task.paymentMethod || "card") === "card" ? "selected" : ""}>Из резерва</option>
@@ -5947,13 +6045,16 @@ SETTINGS_HTML = r"""<!doctype html>
         <input id="refusedFeePercent" type="number" min="0" max="100" step="0.1">
       </label>
       <label>Сколько дней хранить выполненное задание
-        <input id="completedTasksRetentionDays" type="number" min="1" max="1000" step="1">
+        <input id="completedTasksRetentionDays" type="number" min="1" max="365" step="1">
+      </label>
+      <label>Сколько дней хранить непринятые задания
+        <input id="unacceptedTasksRetentionDays" type="number" min="1" max="365" step="1">
       </label>
       <label>Сколько дней хранить расчеты сотрудников
-        <input id="employeeSettlementsRetentionDays" type="number" min="1" max="1000" step="1">
+        <input id="employeeSettlementsRetentionDays" type="number" min="1" max="365" step="1">
       </label>
       <label>Сколько дней хранить расчеты клиентов
-        <input id="clientSettlementsRetentionDays" type="number" min="1" max="1000" step="1">
+        <input id="clientSettlementsRetentionDays" type="number" min="1" max="365" step="1">
       </label>
       <label>Телефон обратной связи
         <input id="feedbackPhone" type="text">
@@ -6032,6 +6133,7 @@ SETTINGS_HTML = r"""<!doctype html>
       refusedFeePercent.value = settings.refusedFeePercent ?? 1;
       refusedFeePercent.max = completedFeePercent.value;
       completedTasksRetentionDays.value = settings.completedTasksRetentionDays ?? 365;
+      unacceptedTasksRetentionDays.value = settings.unacceptedTasksRetentionDays ?? 365;
       employeeSettlementsRetentionDays.value = settings.employeeSettlementsRetentionDays ?? 365;
       clientSettlementsRetentionDays.value = settings.clientSettlementsRetentionDays ?? 365;
       feedbackPhone.value = settings.feedbackPhone || "";
@@ -6057,6 +6159,7 @@ SETTINGS_HTML = r"""<!doctype html>
           completedFeePercent: completedFeePercent.value,
           refusedFeePercent: refusedFeePercent.value,
           completedTasksRetentionDays: completedTasksRetentionDays.value,
+          unacceptedTasksRetentionDays: unacceptedTasksRetentionDays.value,
           employeeSettlementsRetentionDays: employeeSettlementsRetentionDays.value,
           clientSettlementsRetentionDays: clientSettlementsRetentionDays.value,
           feedbackPhone: feedbackPhone.value,
