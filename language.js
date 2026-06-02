@@ -311,8 +311,9 @@
     "Скачать для Android": "Pobierz na Androida",
     "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "Wersja na iPhone'a jest przygotowywana. Kod QR prowadzi do aktualnych informacji na stronie.",
     "Скачать для iPhone": "Pobierz na iPhone'a"
-    ,"40 кредитов": "40 kredytów"
-    ,"60 кредитов": "60 kredytów"
+    ,"Из резерва": "Z rezerwy"
+    ,"Город, улица, дом, квартира": "Miasto, ulica, dom, mieszkanie"
+    ,"Город, улица, цена, оплата": "Miasto, ulica, cena, płatność"
   });
 
   Object.assign(dictionary.en, {
@@ -332,8 +333,9 @@
     "Скачать для Android": "Download for Android",
     "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "The iPhone version is being prepared. The QR code leads to the latest information on the website.",
     "Скачать для iPhone": "Download for iPhone"
-    ,"40 кредитов": "40 credits"
-    ,"60 кредитов": "60 credits"
+    ,"Из резерва": "From reserve"
+    ,"Город, улица, дом, квартира": "City, street, house, apartment"
+    ,"Город, улица, цена, оплата": "City, street, price, payment"
   });
 
   Object.assign(dictionary.uk, {
@@ -353,8 +355,9 @@
     "Скачать для Android": "Завантажити для Android",
     "Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.": "Версія для iPhone готується. QR-код веде до актуальної інформації на сайті.",
     "Скачать для iPhone": "Завантажити для iPhone"
-    ,"40 кредитов": "40 кредитів"
-    ,"60 кредитов": "60 кредитів"
+    ,"Из резерва": "З резерву"
+    ,"Город, улица, дом, квартира": "Місто, вулиця, будинок, квартира"
+    ,"Город, улица, цена, оплата": "Місто, вулиця, ціна, оплата"
   });
 
   const originalText = new WeakMap();

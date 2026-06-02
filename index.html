@@ -143,9 +143,9 @@
               <label>Описание</label>
               <div class="input-area">Нужно забрать коробки, позвонить на месте и привезти по адресу.</div>
               <div class="input-line small">Телефон для связи</div>
-              <div class="input-line small">Адрес или точка встречи</div>
+              <div class="input-line small">Город, улица, дом, квартира</div>
               <div class="choice-row">
-                <span class="selected">Карта</span>
+                <span class="selected">Из резерва</span>
                 <span>Наличные</span>
               </div>
               <button class="app-button">Отправить задачу</button>
@@ -158,7 +158,7 @@
               </div>
               <div class="amount-row">
                 <div><small>К оплате</small><strong>120 PLN</strong></div>
-                <div><small>Резерв</small><strong>40 кредитов</strong></div>
+                <div><small>Резерв</small><strong>40 KRDT</strong></div>
               </div>
               <div class="task-card-mini">
                 <strong>Забрать коробки</strong>
@@ -179,7 +179,7 @@
               <h3>Создайте аккаунт и скачайте приложение</h3>
               <form class="inline-signup-form" data-signup-role="client">
                 <input name="displayName" autocomplete="name" placeholder="Имя клиента" aria-label="Имя клиента" data-placeholder="Имя клиента" required>
-                <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
+                <input name="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
                 <input name="password" type="password" autocomplete="new-password" minlength="4" placeholder="Пароль" aria-label="Пароль" data-placeholder="Пароль" required>
                 <button class="primary-action" type="submit">Зарегистрироваться</button>
               </form>
@@ -190,7 +190,7 @@
                   <div>
                     <h3>Приложение клиента для Android</h3>
                     <p>Отсканируйте QR-код или скачайте приложение напрямую.</p>
-                    <a class="secondary-action" href="/downloads/ogarniemy-client.apk" download>Скачать для Android</a>
+                    <a class="secondary-action" href="/downloads/client-ogarniemy.apk" download>Скачать для Android</a>
                   </div>
                 </article>
                 <article class="app-download-card pending" id="client-iphone">
@@ -228,7 +228,7 @@
               <h3>Создайте аккаунт и скачайте приложение</h3>
               <form class="inline-signup-form" data-signup-role="employee">
                 <input name="displayName" autocomplete="name" placeholder="Имя сотрудника" aria-label="Имя сотрудника" data-placeholder="Имя сотрудника" required>
-                <input name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
+                <input name="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
                 <input name="password" type="password" autocomplete="new-password" minlength="4" placeholder="Пароль" aria-label="Пароль" data-placeholder="Пароль" required>
                 <button class="primary-action" type="submit">Зарегистрироваться</button>
               </form>
@@ -239,7 +239,7 @@
                   <div>
                     <h3>Приложение сотрудника для Android</h3>
                     <p>Отсканируйте QR-код или скачайте приложение напрямую.</p>
-                    <a class="secondary-action" href="/downloads/ogarniemy-employee.apk" download>Скачать для Android</a>
+                    <a class="secondary-action" href="/downloads/worker-ogarniemy.apk" download>Скачать для Android</a>
                   </div>
                 </article>
                 <article class="app-download-card pending" id="employee-iphone">
@@ -278,12 +278,12 @@
               </div>
               <div class="amount-row">
                 <div><small>К выплате</small><strong>280 PLN</strong></div>
-                <div><small>Резерв</small><strong>60 кредитов</strong></div>
+                <div><small>Резерв</small><strong>60 KRDT</strong></div>
               </div>
               <h3>Доступные задачи</h3>
               <div class="task-card-mini">
                 <strong>Накачать колесо</strong>
-                <span>Адрес, телефон, цена, оплата</span>
+                <span>Город, улица, цена, оплата</span>
                 <div class="actions">
                   <button>Принять</button>
                   <button>Отказ</button>

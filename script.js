@@ -144,6 +144,10 @@ function currentSignupMessages() {
 
 document.querySelectorAll("[data-signup-role]").forEach((form) => {
   const result = form.parentElement.querySelector("[data-signup-result]");
+  const phone = form.querySelector('input[name="phone"]');
+  phone.addEventListener("input", () => {
+    phone.value = phone.value.replace(/\D/g, "");
+  });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const messages = currentSignupMessages();

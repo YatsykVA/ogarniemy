@@ -4,8 +4,12 @@
   const form = document.querySelector("#signupForm");
   const result = document.querySelector("#signupResult");
   const download = document.querySelector("[data-download]");
+  const phone = form.querySelector('input[name="phone"]');
 
   download.href = apkPath;
+  phone.addEventListener("input", () => {
+    phone.value = phone.value.replace(/\D/g, "");
+  });
 
   const messages = {
     phone_already_registered: "Ten numer telefonu jest już zarejestrowany.",

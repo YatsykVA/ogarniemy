@@ -106,8 +106,19 @@ def create_client(conn, login, password, display_name):
 
 def normalize_phone(value):
     text = str(value or "").strip()
-    digits = "".join(ch for ch in text if ch.isdigit())
-    return f"+{digits}" if digits else ""
+    return "".join(ch for ch in text if ch.isdigit())
+
+
+def compose_address(city="", postal_code="", street="", house="", apartment="", fallback=""):
+    city = str(city or "").strip()
+    postal_code = str(postal_code or "").strip()
+    street = str(street or "").strip()
+    house = str(house or "").strip()
+    apartment = str(apartment or "").strip()
+    parts = [part for part in (postal_code, city, street, house) if part]
+    if apartment:
+        parts.append(f"кв. {apartment}")
+    return ", ".join(parts) if parts else str(fallback or "").strip()
 
 
 def is_placeholder_text(value):
@@ -245,6 +256,11 @@ def init_db():
             description text not null,
             phone text not null default '',
             address text not null default '',
+            city text not null default '',
+            postal_code text not null default '',
+            street text not null default '',
+            house text not null default '',
+            apartment text not null default '',
             price real not null default 0,
             payment_method text not null default 'card',
             status text not null default 'new',
@@ -345,6 +361,16 @@ def ensure_task_columns(conn):
         conn.execute("alter table tasks add column address text not null default ''")
     if "phone" not in columns:
         conn.execute("alter table tasks add column phone text not null default ''")
+    if "city" not in columns:
+        conn.execute("alter table tasks add column city text not null default ''")
+    if "postal_code" not in columns:
+        conn.execute("alter table tasks add column postal_code text not null default ''")
+    if "street" not in columns:
+        conn.execute("alter table tasks add column street text not null default ''")
+    if "house" not in columns:
+        conn.execute("alter table tasks add column house text not null default ''")
+    if "apartment" not in columns:
+        conn.execute("alter table tasks add column apartment text not null default ''")
     if "price" not in columns:
         conn.execute("alter table tasks add column price real not null default 0")
     if "payment_method" not in columns:
@@ -376,6 +402,14 @@ def ensure_account_columns(conn):
     client_columns = {row["name"] for row in conn.execute("pragma table_info(clients)").fetchall()}
     if "phone" not in client_columns:
         conn.execute("alter table clients add column phone text not null default ''")
+    for table in ("users", "clients"):
+        rows = conn.execute(f"select id, login, phone from {table}").fetchall()
+        for row in rows:
+            if not row["phone"] and not str(row["login"] or "").startswith("+"):
+                continue
+            phone = normalize_phone(row["phone"] or row["login"])
+            if phone:
+                conn.execute(f"update {table} set login = ?, phone = ? where id = ?", (phone, phone, row["id"]))
 
 
 def restore_client_settlement_links(conn):
@@ -940,10 +974,13 @@ class App(BaseHTTPRequestHandler):
 
     def admin_settings(self):
         conn = db()
+        reserve_unit = get_setting(conn, "reserve_unit") or "credits"
+        if reserve_unit not in ("credits", "tokens", "coins", "points"):
+            reserve_unit = "credits"
         settings = {
             "currency": get_setting(conn, "currency") or "PLN",
-            "reserveUnit": get_setting(conn, "reserve_unit") or "credits",
-            "showPrices": (get_setting(conn, "show_prices") or "1") != "0",
+            "reserveUnit": reserve_unit,
+            "showPrices": True,
             "completedFeePercent": float(get_setting(conn, "completed_fee_percent") or "1"),
             "refusedFeePercent": float(get_setting(conn, "refused_fee_percent") or "1"),
             "completedTasksRetentionDays": retention_days(conn, "completed_tasks_retention_days"),
@@ -977,10 +1014,9 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "bad_currency"}, 400)
             return
         reserve_unit = str(data.get("reserveUnit", "credits")).strip().lower()
-        if reserve_unit not in ("credits", "tokens", "coins", "points", "satoshi"):
+        if reserve_unit not in ("credits", "tokens", "coins", "points"):
             self.send_json({"error": "bad_reserve_unit"}, 400)
             return
-        show_prices = "1" if data.get("showPrices", True) else "0"
         completed_fee_percent = parse_price(data.get("completedFeePercent", 1))
         refused_fee_percent = parse_price(data.get("refusedFeePercent", 1))
         completed_tasks_retention_days = parse_retention_days(data.get("completedTasksRetentionDays", RETENTION_DEFAULT_DAYS))
@@ -991,6 +1027,9 @@ class App(BaseHTTPRequestHandler):
             return
         if refused_fee_percent is None or refused_fee_percent < 0 or refused_fee_percent > 100:
             self.send_json({"error": "bad_refused_fee_percent"}, 400)
+            return
+        if refused_fee_percent > completed_fee_percent:
+            self.send_json({"error": "refused_fee_percent_exceeds_completed_fee_percent"}, 400)
             return
         if completed_tasks_retention_days is None:
             self.send_json({"error": "bad_completed_tasks_retention_days"}, 400)
@@ -1009,10 +1048,6 @@ class App(BaseHTTPRequestHandler):
         conn.execute(
             "insert into settings(key, value) values('reserve_unit', ?) on conflict(key) do update set value = excluded.value",
             (reserve_unit,),
-        )
-        conn.execute(
-            "insert into settings(key, value) values('show_prices', ?) on conflict(key) do update set value = excluded.value",
-            (show_prices,),
         )
         conn.execute(
             "insert into settings(key, value) values('completed_fee_percent', ?) on conflict(key) do update set value = excluded.value",
@@ -1058,7 +1093,7 @@ class App(BaseHTTPRequestHandler):
         conn = db()
         rows = conn.execute(
             """
-            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.price, tasks.payment_method,
+            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price, tasks.payment_method,
                    tasks.status, tasks.created_at, tasks.accepted_at, tasks.completed_at, tasks.client_id, tasks.settlement_id,
                    tasks.client_settlement_id,
                    users.display_name as assigned_to_name,
@@ -1079,7 +1114,7 @@ class App(BaseHTTPRequestHandler):
         ).fetchall()
         conn.close()
         lang = self.request_language()
-        self.send_json({"tasks": [task_json(row, lang) for row in rows]})
+        self.send_json({"tasks": [task_json(row, lang, hide_private=row["status"] != "accepted") for row in rows]})
 
     def handle_decision(self, path):
         user = self.user_from_token()
@@ -1226,7 +1261,7 @@ class App(BaseHTTPRequestHandler):
         conn = db()
         rows = conn.execute(
             """
-            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.price, tasks.payment_method,
+            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price, tasks.payment_method,
                    tasks.status, tasks.created_at, tasks.accepted_at, tasks.completed_at,
                    users.display_name as assigned_to_name,
                    users.login as assigned_to_login,
@@ -1253,7 +1288,7 @@ class App(BaseHTTPRequestHandler):
         conn = db()
         rows = conn.execute(
             """
-            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.price, tasks.payment_method,
+            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price, tasks.payment_method,
                    tasks.status, tasks.created_at, tasks.accepted_at, tasks.completed_at,
                    users.display_name as assigned_to_name,
                    users.login as assigned_to_login,
@@ -1284,14 +1319,19 @@ class App(BaseHTTPRequestHandler):
     def create_task_from_data(self, data, client_id=None):
         title = str(data.get("title", "")).strip()
         description = str(data.get("description", "")).strip()
-        phone = str(data.get("phone", "")).strip()
-        address = str(data.get("address", "")).strip()
+        phone = normalize_phone(data.get("phone", ""))
+        city = str(data.get("city", "")).strip()
+        postal_code = str(data.get("postalCode", data.get("postal_code", ""))).strip()
+        street = str(data.get("street", "")).strip()
+        house = str(data.get("house", "")).strip()
+        apartment = str(data.get("apartment", "")).strip()
+        address = compose_address(city, postal_code, street, house, apartment, data.get("address", ""))
         price = parse_price(data.get("price", 0))
         raw_payment_method = data.get("paymentMethod", data.get("payment_method", None))
         payment_method = normalize_payment_method(raw_payment_method)
         raw_client_id = data.get("clientId", data.get("client_id", ""))
         if client_id is not None:
-            if not title or not description or not phone or not address:
+            if not title or not description or not phone or not city or not street:
                 self.send_json({"error": "all_fields_required"}, 400)
                 return
             if data.get("price") in (None, "") or price is None or price <= 0:
@@ -1309,6 +1349,9 @@ class App(BaseHTTPRequestHandler):
         if not title:
             self.send_json({"error": "title_required"}, 400)
             return
+        if not city or not street:
+            self.send_json({"error": "city_and_street_required"}, 400)
+            return
         if price is None:
             self.send_json({"error": "bad_price"}, 400)
             return
@@ -1322,9 +1365,16 @@ class App(BaseHTTPRequestHandler):
                 conn.close()
                 self.send_json({"error": "client_not_found"}, 404)
                 return
+            if payment_method == "card":
+                report = self.build_client_report(client_id)
+                reserve_available = float((report or {}).get("totals", {}).get("reservePrice", 0) or 0)
+                if reserve_available < float(price or 0):
+                    conn.close()
+                    self.send_json({"error": "client_reserve_too_low"}, 409)
+                    return
         cur = conn.execute(
-            "insert into tasks(title, description, phone, address, price, payment_method, client_id, created_at) values(?, ?, ?, ?, ?, ?, ?, ?)",
-            (title, description, phone, address, price, payment_method, client_id, int(time.time())),
+            "insert into tasks(title, description, phone, address, city, postal_code, street, house, apartment, price, payment_method, client_id, created_at) values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, description, phone, address, city, postal_code, street, house, apartment, price, payment_method, client_id, int(time.time())),
         )
         conn.commit()
         task_id = cur.lastrowid
@@ -1339,7 +1389,7 @@ class App(BaseHTTPRequestHandler):
         conn = db()
         rows = conn.execute(
             """
-            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.price, tasks.payment_method,
+            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price, tasks.payment_method,
                    tasks.status, tasks.created_at, tasks.accepted_at, tasks.completed_at, tasks.client_id, tasks.settlement_id,
                    tasks.client_settlement_id,
                    users.display_name as assigned_to_name,
@@ -1382,7 +1432,7 @@ class App(BaseHTTPRequestHandler):
             return
         conn = db()
         row = conn.execute(
-            "select id, status from tasks where id = ? and client_id = ?",
+            "select id, status, payment_method from tasks where id = ? and client_id = ?",
             (task_id, client["id"]),
         ).fetchone()
         if not row:
@@ -1432,6 +1482,13 @@ class App(BaseHTTPRequestHandler):
             conn.close()
             self.send_json({"error": "task_not_new"}, 409)
             return
+        if normalize_payment_method(row["payment_method"]) == "card":
+            report = self.build_client_report(client["id"])
+            reserve_available = float((report or {}).get("totals", {}).get("reservePrice", 0) or 0)
+            if reserve_available < float(price or 0):
+                conn.close()
+                self.send_json({"error": "client_reserve_too_low"}, 409)
+                return
         conn.execute("update tasks set price = ? where id = ?", (price, task_id))
         conn.commit()
         conn.close()
@@ -1636,8 +1693,13 @@ class App(BaseHTTPRequestHandler):
         data = self.read_json()
         title = str(data.get("title", "")).strip()
         description = str(data.get("description", "")).strip()
-        phone = str(data.get("phone", "")).strip()
-        address = str(data.get("address", "")).strip()
+        phone = normalize_phone(data.get("phone", ""))
+        city = str(data.get("city", "")).strip()
+        postal_code = str(data.get("postalCode", data.get("postal_code", ""))).strip()
+        street = str(data.get("street", "")).strip()
+        house = str(data.get("house", "")).strip()
+        apartment = str(data.get("apartment", "")).strip()
+        address = compose_address(city, postal_code, street, house, apartment, data.get("address", ""))
         price = parse_price(data.get("price", 0))
         payment_method = normalize_payment_method(data.get("paymentMethod", data.get("payment_method", "card")))
         raw_client_id = data.get("clientId", data.get("client_id", ""))
@@ -1650,6 +1712,9 @@ class App(BaseHTTPRequestHandler):
                 return
         if not title:
             self.send_json({"error": "title_required"}, 400)
+            return
+        if not city or not street:
+            self.send_json({"error": "city_and_street_required"}, 400)
             return
         if price is None:
             self.send_json({"error": "bad_price"}, 400)
@@ -1685,10 +1750,10 @@ class App(BaseHTTPRequestHandler):
         conn.execute(
             """
             update tasks
-            set title = ?, description = ?, phone = ?, address = ?, price = ?, payment_method = ?, client_id = ?
+            set title = ?, description = ?, phone = ?, address = ?, city = ?, postal_code = ?, street = ?, house = ?, apartment = ?, price = ?, payment_method = ?, client_id = ?
             where id = ?
             """,
-            (title, description, phone, address, price, payment_method, client_id, task_id),
+            (title, description, phone, address, city, postal_code, street, house, apartment, price, payment_method, client_id, task_id),
         )
         conn.commit()
         conn.close()
@@ -2110,7 +2175,7 @@ class App(BaseHTTPRequestHandler):
 
         rows = conn.execute(
             """
-            select id, title, description, phone, address, price, payment_method, status, created_at, decided_at, accepted_at, completed_at
+            select id, title, description, phone, address, city, postal_code, street, house, apartment, price, payment_method, status, created_at, decided_at, accepted_at, completed_at
             from tasks
             where assigned_to = ? and settlement_id is null
             order by coalesce(decided_at, created_at) desc, id desc
@@ -2119,7 +2184,7 @@ class App(BaseHTTPRequestHandler):
         ).fetchall()
         refused_rows = conn.execute(
             """
-            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.price, tasks.payment_method,
+            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price, tasks.payment_method,
                    'refused' as status, tasks.created_at, task_events.created_at as decided_at,
                    tasks.accepted_at, tasks.completed_at
             from task_events
@@ -2619,7 +2684,7 @@ class App(BaseHTTPRequestHandler):
             return None
         rows = conn.execute(
             """
-            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.price,
+            select tasks.id, tasks.title, tasks.description, tasks.phone, tasks.address, tasks.city, tasks.postal_code, tasks.street, tasks.house, tasks.apartment, tasks.price,
                    tasks.payment_method, tasks.status, tasks.created_at, tasks.decided_at,
                    tasks.accepted_at, tasks.completed_at,
                    tasks.assigned_to,
@@ -3181,7 +3246,14 @@ class App(BaseHTTPRequestHandler):
         self.send_json({"ok": True, "deleted": settlement_id})
 
 
-def task_json(row, lang="ru"):
+def row_value(row, key, default=""):
+    try:
+        return row[key] if row[key] is not None else default
+    except (KeyError, IndexError):
+        return default
+
+
+def task_json(row, lang="ru", hide_private=False):
     client_name = ""
     assigned_to_name = ""
     assigned_to_login = ""
@@ -3238,12 +3310,23 @@ def task_json(row, lang="ru"):
     except (KeyError, IndexError):
         decided_at = None
     editable = row["status"] != "completed"
+    city = row_value(row, "city")
+    postal_code = row_value(row, "postal_code")
+    street = row_value(row, "street")
+    house = "" if hide_private else row_value(row, "house")
+    apartment = "" if hide_private else row_value(row, "apartment")
+    address = compose_address(city, postal_code, street, house, apartment, row["address"])
     return {
         "id": row["id"],
         "title": translate_text(row["title"], lang),
         "description": translate_text(row["description"], lang),
-        "phone": row["phone"],
-        "address": row["address"],
+        "phone": "" if hide_private else row["phone"],
+        "address": address,
+        "city": city,
+        "postalCode": postal_code,
+        "street": street,
+        "house": house,
+        "apartment": apartment,
         "originalTitle": row["title"],
         "originalDescription": row["description"],
         "originalPhone": row["phone"],
@@ -3299,6 +3382,11 @@ def task_report_json(row, lang="ru"):
         "description": translate_text(row["description"], lang),
         "phone": row["phone"],
         "address": row["address"],
+        "city": row_value(row, "city"),
+        "postalCode": row_value(row, "postal_code"),
+        "street": row_value(row, "street"),
+        "house": row_value(row, "house"),
+        "apartment": row_value(row, "apartment"),
         "originalTitle": row["title"],
         "originalDescription": row["description"],
         "originalPhone": row["phone"],
@@ -3493,7 +3581,7 @@ def normalize_payment_method(value):
 
 
 def payment_method_name(value):
-    return "Наличные" if normalize_payment_method(value) == "cash" else "Карта"
+    return "Наличные" if normalize_payment_method(value) == "cash" else "Из резерва"
 
 
 def parse_price(value):
@@ -3848,7 +3936,7 @@ INDEX_HTML = r"""<!doctype html>
     body.locked header, body.locked main { display: none; }
     header { position: relative; background: linear-gradient(135deg, #0f766e 0%, #2563eb 48%, #7c3aed 100%); color: white; padding: 24px 28px; box-shadow: 0 18px 42px rgba(37, 99, 235, 0.22); }
     main { max-width: 980px; margin: 0 auto; padding: 24px; }
-    form { display: grid; gap: 10px; grid-template-columns: minmax(210px, 1.35fr) minmax(130px, .82fr) minmax(150px, 1fr) minmax(150px, 1fr) minmax(78px, 92px) minmax(120px, 140px) auto; align-items: start; margin-bottom: 24px; }
+    form { display: grid; gap: 10px; grid-template-columns: repeat(6, minmax(110px, 1fr)); align-items: start; margin-bottom: 24px; }
     input, textarea, select, button { font: inherit; padding: 11px 13px; border-radius: 8px; border: 1px solid rgba(23, 32, 38, 0.18); }
     input, textarea, select { background: rgba(255, 255, 255, 0.92); color: #60717d; min-width: 0; height: 88px; box-sizing: border-box; font-weight: 400; text-align: center; }
     textarea { resize: none; overflow: hidden; line-height: 1.25; padding-top: 27px; }
@@ -3856,7 +3944,7 @@ INDEX_HTML = r"""<!doctype html>
     select { appearance: none; font-weight: 400; text-align-last: center; }
     select, select option { color: #60717d; font-weight: 400; }
     #price, #paymentMethod { width: 100%; }
-    #price { text-align: right; }
+    #price { text-align: center; }
     button { background: linear-gradient(135deg, var(--teal), #2563eb); color: white; border: 0; cursor: pointer; font-weight: 700; box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22); }
     #form > button { height: 88px; display: flex; align-items: center; justify-content: center; text-align: center; }
     .secondary { background: #fff0bf; color: #4a3200; box-shadow: none; margin-top: 8px; }
@@ -3901,11 +3989,15 @@ INDEX_HTML = r"""<!doctype html>
       <textarea id="title" data-placeholder="taskTitle" placeholder="Название&#10;Задание" required></textarea>
       <input id="description" data-placeholder="description" placeholder="Описание">
       <textarea id="phone" placeholder="Номер&#10;Телефона" inputmode="tel"></textarea>
-      <input id="address" data-placeholder="address" placeholder="Адрес">
+      <input id="city" placeholder="Город" required>
+      <input id="postalCode" placeholder="Код">
+      <input id="street" placeholder="Улица" required>
+      <input id="house" placeholder="Дом">
+      <input id="apartment" placeholder="Квартира">
       <input id="price" data-placeholder="price" placeholder="Цена" inputmode="decimal">
       <select id="paymentMethod">
         <option value="cash">Наличные</option>
-        <option value="card">Карта</option>
+        <option value="card">Из резерва</option>
       </select>
       <button data-i18n="add">Добавить</button>
     </form>
@@ -4044,7 +4136,7 @@ INDEX_HTML = r"""<!doctype html>
       return `<div class="taskDates">${rows.map(row => `<span><strong>${row[0]}:</strong> ${formatCompactDate(row[1])}</span>`).join("")}</div>`;
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Карта";
+      return method === "cash" ? "Наличные" : "Из резерва";
     }
     function assignedEmployeeName(task) {
       const parts = [task.assignedToName, task.assignedToLogin].filter(value => value && String(value).trim());
@@ -4082,10 +4174,14 @@ INDEX_HTML = r"""<!doctype html>
           <input name="title" value="${escapeAttr(task.originalTitle || task.title || "")}" placeholder="${texts[language].taskTitle}" required>
           <input name="description" value="${escapeAttr(task.originalDescription || task.description || "")}" placeholder="${texts[language].description}">
           <input name="phone" value="${escapeAttr(task.originalPhone || task.phone || "")}" placeholder="Номер телефона" inputmode="tel">
-          <input name="address" value="${escapeAttr(task.originalAddress || task.address || "")}" placeholder="${texts[language].address}">
+          <input name="city" value="${escapeAttr(task.city || "")}" placeholder="Город" required>
+          <input name="postalCode" value="${escapeAttr(task.postalCode || "")}" placeholder="Код">
+          <input name="street" value="${escapeAttr(task.street || "")}" placeholder="Улица" required>
+          <input name="house" value="${escapeAttr(task.house || "")}" placeholder="Дом">
+          <input name="apartment" value="${escapeAttr(task.apartment || "")}" placeholder="Квартира">
           <input name="price" value="${escapeAttr(task.price || "")}" placeholder="${texts[language].price}" inputmode="decimal">
           <select name="paymentMethod">
-            <option value="card" ${(task.paymentMethod || "card") === "card" ? "selected" : ""}>Карта</option>
+            <option value="card" ${(task.paymentMethod || "card") === "card" ? "selected" : ""}>Из резерва</option>
             <option value="cash" ${task.paymentMethod === "cash" ? "selected" : ""}>Наличные</option>
           </select>
           <select name="clientId">
@@ -4116,7 +4212,11 @@ INDEX_HTML = r"""<!doctype html>
           title: form.title.value,
           description: form.description.value,
           phone: form.phone.value,
-          address: form.address.value,
+          city: form.city.value,
+          postalCode: form.postalCode.value,
+          street: form.street.value,
+          house: form.house.value,
+          apartment: form.apartment.value,
           price: form.price.value,
           paymentMethod: form.paymentMethod.value,
           clientId: form.clientId.value
@@ -4149,12 +4249,16 @@ INDEX_HTML = r"""<!doctype html>
       await fetch("/api/admin/tasks", {
         method: "POST",
         headers: adminHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ title: title.value, description: description.value, phone: phone.value, address: address.value, price: price.value, paymentMethod: paymentMethod.value })
+        body: JSON.stringify({ title: title.value, description: description.value, phone: phone.value, city: city.value, postalCode: postalCode.value, street: street.value, house: house.value, apartment: apartment.value, price: price.value, paymentMethod: paymentMethod.value })
       });
       title.value = "";
       description.value = "";
       phone.value = "";
-      address.value = "";
+      city.value = "";
+      postalCode.value = "";
+      street.value = "";
+      house.value = "";
+      apartment.value = "";
       price.value = "";
       paymentMethod.value = "cash";
       loadTasks();
@@ -4220,7 +4324,7 @@ INDEX_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
@@ -4391,7 +4495,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
@@ -4518,7 +4622,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
       return String(value).replace(/[^\d+]/g, "");
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Карта";
+      return method === "cash" ? "Наличные" : "Из резерва";
     }
     function taskDatesMeta(task) {
       const rows = [];
@@ -4972,7 +5076,7 @@ USERS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function calculationStatus(item) {
@@ -4998,7 +5102,7 @@ USERS_HTML = r"""<!doctype html>
       return String(value).replace(/[^\d+]/g, "");
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Карта";
+      return method === "cash" ? "Наличные" : "Из резерва";
     }
     async function saveUser(event, id) {
       event.preventDefault();
@@ -5207,7 +5311,7 @@ CLIENTS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
@@ -5218,7 +5322,7 @@ CLIENTS_HTML = r"""<!doctype html>
       return String(value).replace(/[^\d+]/g, "");
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Карта";
+      return method === "cash" ? "Наличные" : "Из резерва";
     }
     function taskStatusName(status) {
       const names = { completed: "Выполнено", refused: "Отказался", accepted: "Принято", declined: "Отклонено", new: "Новое" };
@@ -5618,7 +5722,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
-      const labels = { credits: "кредитов", tokens: "токенов", coins: "коинов", points: "баллов", satoshi: "сатоши" };
+      const labels = { credits: "KRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
       return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function calculationStatus(item) {
@@ -5726,7 +5830,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       return String(value).replace(/[^\d+]/g, "");
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Карта";
+      return method === "cash" ? "Наличные" : "Из резерва";
     }
     function taskDatesMeta(task) {
       const rows = [];
@@ -5830,16 +5934,11 @@ SETTINGS_HTML = r"""<!doctype html>
       </label>
       <label>Единица резерва
         <select id="reserveUnit">
-          <option value="credits">Кредиты</option>
-          <option value="tokens">Токены</option>
-          <option value="coins">Коины</option>
-          <option value="points">Баллы</option>
-          <option value="satoshi">Сатоши</option>
+          <option value="credits">KRDT</option>
+          <option value="tokens">TKN</option>
+          <option value="coins">KOIN</option>
+          <option value="points">BAL</option>
         </select>
-      </label>
-      <label>
-        <input id="showPrices" type="checkbox">
-        Показывать цены и суммы
       </label>
       <label>Процент с выполненных работ, который мы удерживаем себе
         <input id="completedFeePercent" type="number" min="0" max="100" step="0.1">
@@ -5929,9 +6028,9 @@ SETTINGS_HTML = r"""<!doctype html>
       const settings = data.settings || {};
       currency.value = settings.currency || "PLN";
       reserveUnit.value = settings.reserveUnit || "credits";
-      showPrices.checked = settings.showPrices !== false;
       completedFeePercent.value = settings.completedFeePercent ?? 1;
       refusedFeePercent.value = settings.refusedFeePercent ?? 1;
+      refusedFeePercent.max = completedFeePercent.value;
       completedTasksRetentionDays.value = settings.completedTasksRetentionDays ?? 365;
       employeeSettlementsRetentionDays.value = settings.employeeSettlementsRetentionDays ?? 365;
       clientSettlementsRetentionDays.value = settings.clientSettlementsRetentionDays ?? 365;
@@ -5941,6 +6040,12 @@ SETTINGS_HTML = r"""<!doctype html>
       feedbackTelegram.value = settings.feedbackTelegram || "";
       feedbackWhatsApp.value = settings.feedbackWhatsApp || "";
     }
+    completedFeePercent.addEventListener("input", () => {
+      refusedFeePercent.max = completedFeePercent.value || "0";
+      if (Number(refusedFeePercent.value || 0) > Number(completedFeePercent.value || 0)) {
+        refusedFeePercent.value = completedFeePercent.value || "0";
+      }
+    });
     document.querySelector("#settingsForm").addEventListener("submit", async event => {
       event.preventDefault();
       const res = await fetch("/api/admin/settings", {
@@ -5949,7 +6054,6 @@ SETTINGS_HTML = r"""<!doctype html>
         body: JSON.stringify({
           currency: currency.value,
           reserveUnit: reserveUnit.value,
-          showPrices: showPrices.checked,
           completedFeePercent: completedFeePercent.value,
           refusedFeePercent: refusedFeePercent.value,
           completedTasksRetentionDays: completedTasksRetentionDays.value,

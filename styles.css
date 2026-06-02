@@ -342,6 +342,11 @@ h3 {
   box-shadow: var(--shadow);
 }
 
+.client-band .inline-signup h3,
+.client-band .app-download-card p {
+  color: var(--ink) !important;
+}
+
 .inline-signup .eyebrow {
   margin-bottom: 6px;
 }
@@ -1163,6 +1168,16 @@ h3 {
   margin-top: 26px;
 }
 
+.launch-card .final-actions .primary-action {
+  flex-basis: 100%;
+}
+
+.launch-card .final-actions .secondary-action {
+  flex: 1 1 calc(50% - 6px);
+  min-width: 0;
+  box-sizing: border-box;
+}
+
 .deck-controls {
   position: fixed;
   z-index: 20;
@@ -1352,12 +1367,36 @@ h3 {
   }
 
   .final-actions a {
-    width: 100%;
+    width: auto;
+  }
+
+  .launch-card .final-actions .secondary-action {
+    padding: 0 10px;
+    gap: 6px;
+    font-size: 0.9rem;
   }
 
   .inline-signup {
     padding: 16px;
     scroll-margin-top: 250px;
+  }
+
+  .client-band .showcase-layout,
+  .employee-band .showcase-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .client-band .section-copy,
+  .employee-band .section-copy {
+    order: -1;
+  }
+
+  .inline-signup {
+    width: calc(100% + 12px);
+    margin-left: -6px;
+    margin-right: -6px;
+    text-align: center;
   }
 
   .inline-signup-form {

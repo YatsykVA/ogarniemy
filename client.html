@@ -6,7 +6,7 @@
     <title>ogarniemy.pro | Klient</title>
     <link rel="stylesheet" href="/signup.css?v=1">
   </head>
-  <body data-role="client" data-apk="/downloads/ogarniemy-client.apk">
+  <body data-role="client" data-apk="/downloads/client-ogarniemy.apk">
     <main class="signup-shell">
       <a class="signup-brand" href="/">
         <img src="/assets/client-app-icon.png" alt="">
@@ -19,7 +19,7 @@
           <p class="signup-lead">Załóż konto klienta. Po rejestracji otrzymasz login, którym zalogujesz się w aplikacji.</p>
           <form class="signup-form" id="signupForm">
             <label>Imię klienta<input name="displayName" autocomplete="name" required></label>
-            <label>Numer telefonu<input name="phone" type="tel" autocomplete="tel" placeholder="+48 000 000 000" required></label>
+            <label>Numer telefonu<input name="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="48000000000" required></label>
             <label>Hasło<input name="password" type="password" autocomplete="new-password" minlength="4" required></label>
             <button type="submit">Zarejestruj klienta</button>
           </form>
