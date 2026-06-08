@@ -1493,7 +1493,7 @@ class App(BaseHTTPRequestHandler):
 
         conn = db()
         row = conn.execute(
-            "select id, status from tasks where id = ? and client_id = ?",
+            "select id, status, payment_method from tasks where id = ? and client_id = ?",
             (task_id, client["id"]),
         ).fetchone()
         if not row:
@@ -1549,6 +1549,7 @@ class App(BaseHTTPRequestHandler):
                 snapshot = json.loads(row["snapshot_json"])
             except Exception:
                 snapshot = {}
+            translate_snapshot_tasks(snapshot, self.request_language())
             settlements.append(
                 {
                     "id": row["id"],
@@ -2262,6 +2263,7 @@ class App(BaseHTTPRequestHandler):
             except Exception:
                 snapshot = {}
             enrich_snapshot_task_sources(snapshot)
+            translate_snapshot_tasks(snapshot, lang)
             snapshot["id"] = settlement["id"]
             snapshot["createdAt"] = settlement["created_at"]
             history.append(snapshot)
@@ -2588,6 +2590,7 @@ class App(BaseHTTPRequestHandler):
             except Exception:
                 snapshot = {}
             enrich_snapshot_task_sources(snapshot)
+            translate_snapshot_tasks(snapshot, self.request_language())
             settlements.append(
                 {
                     "id": row["id"],
@@ -2648,6 +2651,7 @@ class App(BaseHTTPRequestHandler):
                 snapshot = json.loads(row["snapshot_json"])
             except Exception:
                 snapshot = {}
+            translate_snapshot_tasks(snapshot, self.request_language())
             calculated = snapshot.get("calculated", True)
             settlements.append(
                 {
@@ -2803,7 +2807,7 @@ class App(BaseHTTPRequestHandler):
         reserve_used_for_completed = round(min(reserve_before_completed, completed_card_price), 2)
         reserve_price = round(max(0, reserve_before_completed - completed_card_price), 2)
         total_price = round(max(0, completed_card_price - reserve_before_completed), 2)
-        active_payment_due = round(max(0, active_card_price - reserve_price), 2)
+        active_payment_due = round(max(0, active_card_price - reserve_price) + active_cash_price, 2)
         totals = {
             "grossTotalPrice": gross_total_price,
             "totalPrice": total_price,
@@ -3326,6 +3330,19 @@ def enrich_snapshot_task_sources(snapshot):
         )
 
 
+def translate_snapshot_tasks(snapshot, lang):
+    for key in ("completed", "active", "new", "refused", "other"):
+        for task in snapshot.get(key, []) or []:
+            if not isinstance(task, dict):
+                continue
+            original_title = task.get("originalTitle") or task.get("title") or ""
+            original_description = task.get("originalDescription") or task.get("description") or ""
+            task["originalTitle"] = original_title
+            task["originalDescription"] = original_description
+            task["title"] = translate_text(original_title, lang)
+            task["description"] = translate_text(original_description, lang)
+
+
 def task_json(row, lang="ru", hide_private=False):
     client_name = ""
     assigned_to_name = ""
@@ -3771,7 +3788,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Удержание за наличные из резерва": "Cash job fee from reserve", "Удержание": "Fee",
       "Процент с выполненных работ, который мы удерживаем себе": "Percent withheld from completed jobs",
       "Процент с отказанных или отмененных работ, который мы удерживаем себе": "Percent withheld from refused or cancelled jobs",
-      "Валюта": "Currency", "Показывать цены и суммы": "Show prices and amounts", "Сколько дней хранить непринятые задания": "How many days to keep unaccepted tasks", "Телефон обратной связи": "Feedback phone",
+      "Валюта": "Currency", "Единица резерва": "Reserve unit", "Показывать цены и суммы": "Show prices and amounts", "Сколько дней хранить выполненное задание": "How many days to keep completed tasks", "Сколько дней хранить непринятые задания": "How many days to keep unaccepted tasks", "Сколько дней хранить расчеты сотрудников": "How many days to keep employee payments", "Сколько дней хранить расчеты клиентов": "How many days to keep client payments", "Телефон обратной связи": "Feedback phone",
       "E-mail обратной связи": "Feedback e-mail", "Обычный адрес": "Regular address", "Telegram": "Telegram", "WhatsApp": "WhatsApp",
       "Изменить пароль": "Change password", "Старый пароль": "Old password", "Повторите старый пароль": "Repeat old password",
       "Введите новый пароль": "Enter new password", "Сбросить пароль": "Reset password", "Настройки сохранены": "Settings saved",
@@ -3815,7 +3832,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Удержание за наличные из резерва": "Утримання за готівку з резерву", "Удержание": "Утримання",
       "Процент с выполненных работ, который мы удерживаем себе": "Відсоток з виконаних робіт, який ми утримуємо собі",
       "Процент с отказанных или отмененных работ, который мы удерживаем себе": "Відсоток з відмовлених або скасованих робіт, який ми утримуємо собі",
-      "Валюта": "Валюта", "Показывать цены и суммы": "Показувати ціни та суми", "Сколько дней хранить непринятые задания": "Скільки днів зберігати неприйняті завдання", "Телефон обратной связи": "Телефон зворотного зв'язку",
+      "Валюта": "Валюта", "Единица резерва": "Одиниця резерву", "Показывать цены и суммы": "Показувати ціни та суми", "Сколько дней хранить выполненное задание": "Скільки днів зберігати виконане завдання", "Сколько дней хранить непринятые задания": "Скільки днів зберігати неприйняті завдання", "Сколько дней хранить расчеты сотрудников": "Скільки днів зберігати розрахунки співробітників", "Сколько дней хранить расчеты клиентов": "Скільки днів зберігати розрахунки клієнтів", "Телефон обратной связи": "Телефон зворотного зв'язку",
       "E-mail обратной связи": "E-mail зворотного зв'язку", "Обычный адрес": "Звичайна адреса", "Telegram": "Telegram", "WhatsApp": "WhatsApp",
       "Изменить пароль": "Змінити пароль", "Старый пароль": "Старий пароль", "Повторите старый пароль": "Повторіть старий пароль",
       "Введите новый пароль": "Введіть новий пароль", "Сбросить пароль": "Скинути пароль", "Настройки сохранены": "Налаштування збережено",
@@ -3859,7 +3876,7 @@ SERVER_LANGUAGE_TOOLS = r"""
       "Удержание за наличные из резерва": "Potrącenie za gotówkę z rezerwy", "Удержание": "Potrącenie",
       "Процент с выполненных работ, который мы удерживаем себе": "Procent z wykonanych prac, który zatrzymujemy",
       "Процент с отказанных или отмененных работ, который мы удерживаем себе": "Procent z odmówionych lub anulowanych prac, który zatrzymujemy",
-      "Валюта": "Waluta", "Показывать цены и суммы": "Pokazywać ceny i kwoty", "Сколько дней хранить непринятые задания": "Ile dni przechowywać nieprzyjęte zadania", "Телефон обратной связи": "Telefon kontaktowy",
+      "Валюта": "Waluta", "Единица резерва": "Jednostka rezerwy", "Показывать цены и суммы": "Pokazywać ceny i kwoty", "Сколько дней хранить выполненное задание": "Ile dni przechowywać wykonane zadanie", "Сколько дней хранить непринятые задания": "Ile dni przechowywać nieprzyjęte zadania", "Сколько дней хранить расчеты сотрудников": "Ile dni przechowywać rozliczenia pracowników", "Сколько дней хранить расчеты клиентов": "Ile dni przechowywać rozliczenia klientów", "Телефон обратной связи": "Telefon kontaktowy",
       "E-mail обратной связи": "E-mail kontaktowy", "Обычный адрес": "Zwykły adres", "Telegram": "Telegram", "WhatsApp": "WhatsApp",
       "Изменить пароль": "Zmień hasło", "Старый пароль": "Stare hasło", "Повторите старый пароль": "Powtórz stare hasło",
       "Введите новый пароль": "Wpisz nowe hasło", "Сбросить пароль": "Resetuj hasło", "Настройки сохранены": "Ustawienia zapisane",
@@ -4033,18 +4050,20 @@ INDEX_HTML = r"""<!doctype html>
     select, select option { color: #60717d; font-weight: 400; }
     #price, #paymentMethod { width: 100%; }
     #price { text-align: center; }
+    .mainTaskRow { display: contents; }
     .addressRow { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(110px, 1fr)); grid-column: 1 / -1; }
     button { background: linear-gradient(135deg, var(--teal), #2563eb); color: white; border: 0; cursor: pointer; font-weight: 700; box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22); }
     #form > button { height: 88px; display: flex; align-items: center; justify-content: center; text-align: center; }
     .secondary { background: #fff0bf; color: #4a3200; box-shadow: none; margin-top: 8px; }
     .restart { background: #16a34a; color: white; box-shadow: 0 10px 24px rgba(22, 163, 74, 0.22); margin-top: 8px; }
     .danger { background: #ef4444; color: white; box-shadow: none; margin-top: 8px; margin-left: 8px; }
-    .editTask { display: grid; gap: 10px; grid-template-columns: repeat(4, minmax(120px, 1fr)) minmax(88px, .65fr) minmax(88px, .65fr) minmax(128px, .85fr); margin-top: 12px; }
+    .editTask { display: grid; gap: 10px; grid-template-columns: repeat(6, minmax(110px, 1fr)); margin-top: 12px; }
     .editTask input, .editTask textarea, .editTask select, .editTask button { min-width: 0; width: 100%; box-sizing: border-box; }
     .editTask input, .editTask select { height: 88px; text-align: center; color: var(--ink); }
     .editTask select { text-align-last: left; appearance: auto; }
-    .editTask button { height: 44px; margin: 0; }
-    .editTaskActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; grid-column: 1 / -1; }
+    .editTask button { height: 88px; margin: 0; }
+    .editTaskActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; grid-column: 5 / span 2; }
+    .editTask .clientSourceSelect { grid-column: 1 / -1; height: 48px; }
     nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     .language-corner { position: absolute; top: 18px; right: 20px; }
@@ -4075,9 +4094,6 @@ INDEX_HTML = r"""<!doctype html>
   </header>
   <main>
     <form id="form">
-      <textarea id="title" data-placeholder="taskTitle" placeholder="Название&#10;Задание" required></textarea>
-      <input id="description" data-placeholder="description" placeholder="Описание">
-      <textarea id="phone" placeholder="Номер&#10;Телефона" inputmode="tel"></textarea>
       <div class="addressRow">
         <input id="city" placeholder="Город" required>
         <input id="postalCode" placeholder="Код">
@@ -4085,12 +4101,17 @@ INDEX_HTML = r"""<!doctype html>
         <input id="house" placeholder="Дом">
         <input id="apartment" placeholder="Квартира">
       </div>
-      <input id="price" data-placeholder="price" placeholder="Цена" inputmode="decimal">
-      <select id="paymentMethod">
-        <option value="cash">Наличные</option>
-        <option value="card">Из резерва</option>
-      </select>
-      <button data-i18n="add">Добавить</button>
+      <div class="mainTaskRow">
+        <textarea id="title" data-placeholder="taskTitle" placeholder="Название&#10;Задание" required></textarea>
+        <input id="description" data-placeholder="description" placeholder="Описание">
+        <textarea id="phone" placeholder="Номер&#10;Телефона" inputmode="tel"></textarea>
+        <input id="price" data-placeholder="price" placeholder="Цена" inputmode="decimal">
+        <select id="paymentMethod">
+          <option value="cash">Наличные</option>
+          <option value="card">Из резерва</option>
+        </select>
+        <button data-i18n="add">Добавить</button>
+      </div>
     </form>
     <section id="tasks"></section>
   </main>
@@ -4100,10 +4121,10 @@ INDEX_HTML = r"""<!doctype html>
     let appSettings = { currency: "PLN", reserveUnit: "credits", showPrices: true };
     let clientOptions = [];
     const texts = {
-      ru: { serverTitle: "Задания", openUsers: "Сотрудники", completedTasks: "Выполненные задания", calculations: "Расчеты", changePassword: "Изменить пароль", oldPassword: "Старый пароль", oldPasswordRepeat: "Повторите старый пароль", newPassword: "Введите новый пароль", passwordChanged: "Пароль изменен", changePasswordError: "Не удалось изменить пароль: ", confirmPassword: "Пароль подтверждения", taskTitle: "Название задания", description: "Описание", city: "Город", postalCode: "Код", street: "Улица", house: "Дом", apartment: "Квартира", address: "Адрес", price: "Цена", add: "Добавить", employee: "сотрудник", delete: "Удалить", restart: "Начать заново", confirmDelete: "Удалить это задание?", resetError: "Не удалось вернуть задание: ", deleteError: "Не удалось удалить задание: ", createdAt: "Создано", acceptedAt: "Принято", completedAt: "Выполнено", new: "Новое", accepted: "Принято", declined: "Отклонено", completed: "Выполнено", refused: "Отказался" },
-      en: { serverTitle: "Tasks", openUsers: "Employees", completedTasks: "Completed tasks", calculations: "Calculations", changePassword: "Change password", oldPassword: "Old password", oldPasswordRepeat: "Repeat old password", newPassword: "Enter new password", passwordChanged: "Password changed", changePasswordError: "Could not change password: ", confirmPassword: "Confirmation password", taskTitle: "Task name", description: "Description", city: "City", postalCode: "Postal code", street: "Street", house: "House", apartment: "Apartment", address: "Address", price: "Price", add: "Add", employee: "employee", delete: "Delete", restart: "Start again", confirmDelete: "Delete this task?", resetError: "Could not return task: ", deleteError: "Could not delete task: ", createdAt: "Created", acceptedAt: "Accepted", completedAt: "Completed", new: "New", accepted: "Accepted", declined: "Declined", completed: "Completed", refused: "Refused" },
-      uk: { serverTitle: "Завдання", openUsers: "Співробітники", completedTasks: "Виконані завдання", calculations: "Розрахунки", changePassword: "Змінити пароль", oldPassword: "Старий пароль", oldPasswordRepeat: "Повторіть старий пароль", newPassword: "Введіть новий пароль", passwordChanged: "Пароль змінено", changePasswordError: "Не вдалося змінити пароль: ", confirmPassword: "Пароль підтвердження", taskTitle: "Назва завдання", description: "Опис", city: "Місто", postalCode: "Код", street: "Вулиця", house: "Будинок", apartment: "Квартира", address: "Адреса", price: "Ціна", add: "Додати", employee: "співробітник", delete: "Видалити", restart: "Почати заново", confirmDelete: "Видалити це завдання?", resetError: "Не вдалося повернути завдання: ", deleteError: "Не вдалося видалити завдання: ", createdAt: "Створено", acceptedAt: "Прийнято", completedAt: "Виконано", new: "Нове", accepted: "Прийнято", declined: "Відхилено", completed: "Виконано", refused: "Відмовився" },
-      pl: { serverTitle: "Zadania", openUsers: "Pracownicy", completedTasks: "Wykonane zadania", calculations: "Rozliczenia", changePassword: "Zmień hasło", oldPassword: "Stare hasło", oldPasswordRepeat: "Powtórz stare hasło", newPassword: "Wpisz nowe hasło", passwordChanged: "Hasło zmienione", changePasswordError: "Nie udało się zmienić hasła: ", confirmPassword: "Hasło potwierdzenia", taskTitle: "Nazwa zadania", description: "Opis", city: "Miasto", postalCode: "Kod", street: "Ulica", house: "Dom", apartment: "Mieszkanie", address: "Adres", price: "Cena", add: "Dodaj", employee: "pracownik", delete: "Usuń", restart: "Zacznij od nowa", confirmDelete: "Usunąć to zadanie?", resetError: "Nie udało się przywrócić zadania: ", deleteError: "Nie udało się usunąć zadania: ", createdAt: "Utworzono", acceptedAt: "Przyjęto", completedAt: "Wykonano", new: "Nowe", accepted: "Przyjęte", declined: "Odrzucone", completed: "Wykonane", refused: "Odmówił" }
+      ru: { serverTitle: "Задания", openUsers: "Сотрудники", completedTasks: "Выполненные задания", calculations: "Расчеты", changePassword: "Изменить пароль", oldPassword: "Старый пароль", oldPasswordRepeat: "Повторите старый пароль", newPassword: "Введите новый пароль", passwordChanged: "Пароль изменен", changePasswordError: "Не удалось изменить пароль: ", confirmPassword: "Пароль подтверждения", taskTitle: "Название задания", description: "Описание", city: "Город", postalCode: "Код", street: "Улица", house: "Дом", apartment: "Квартира", address: "Адрес", price: "Цена", add: "Добавить", employee: "сотрудник", delete: "Удалить", restart: "Начать заново", confirmDelete: "Удалить это задание?", resetError: "Не удалось вернуть задание: ", deleteError: "Не удалось удалить задание: ", createdAt: "Создано", acceptedAt: "Принято", completedAt: "Выполнено", new: "Новое", accepted: "Принято", declined: "Отклонено", completed: "Выполнено", refused: "Отказался", payment: "Оплата", source: "Источник", dispatcher: "Диспетчер", client: "Клиент", cash: "Наличные", fromReserve: "Из резерва", save: "Сохранить", cancel: "Отмена", phone: "Номер телефона" },
+      en: { serverTitle: "Tasks", openUsers: "Employees", completedTasks: "Completed tasks", calculations: "Calculations", changePassword: "Change password", oldPassword: "Old password", oldPasswordRepeat: "Repeat old password", newPassword: "Enter new password", passwordChanged: "Password changed", changePasswordError: "Could not change password: ", confirmPassword: "Confirmation password", taskTitle: "Task name", description: "Description", city: "City", postalCode: "Postal code", street: "Street", house: "House", apartment: "Apartment", address: "Address", price: "Price", add: "Add", employee: "employee", delete: "Delete", restart: "Start again", confirmDelete: "Delete this task?", resetError: "Could not return task: ", deleteError: "Could not delete task: ", createdAt: "Created", acceptedAt: "Accepted", completedAt: "Completed", new: "New", accepted: "Accepted", declined: "Declined", completed: "Completed", refused: "Refused", payment: "Payment", source: "Source", dispatcher: "Dispatcher", client: "Client", cash: "Cash", fromReserve: "From reserve", save: "Save", cancel: "Cancel", phone: "Phone number" },
+      uk: { serverTitle: "Завдання", openUsers: "Співробітники", completedTasks: "Виконані завдання", calculations: "Розрахунки", changePassword: "Змінити пароль", oldPassword: "Старий пароль", oldPasswordRepeat: "Повторіть старий пароль", newPassword: "Введіть новий пароль", passwordChanged: "Пароль змінено", changePasswordError: "Не вдалося змінити пароль: ", confirmPassword: "Пароль підтвердження", taskTitle: "Назва завдання", description: "Опис", city: "Місто", postalCode: "Код", street: "Вулиця", house: "Будинок", apartment: "Квартира", address: "Адреса", price: "Ціна", add: "Додати", employee: "співробітник", delete: "Видалити", restart: "Почати заново", confirmDelete: "Видалити це завдання?", resetError: "Не вдалося повернути завдання: ", deleteError: "Не вдалося видалити завдання: ", createdAt: "Створено", acceptedAt: "Прийнято", completedAt: "Виконано", new: "Нове", accepted: "Прийнято", declined: "Відхилено", completed: "Виконано", refused: "Відмовився", payment: "Оплата", source: "Джерело", dispatcher: "Диспетчер", client: "Клієнт", cash: "Готівка", fromReserve: "З резерву", save: "Зберегти", cancel: "Скасувати", phone: "Номер телефону" },
+      pl: { serverTitle: "Zadania", openUsers: "Pracownicy", completedTasks: "Wykonane zadania", calculations: "Rozliczenia", changePassword: "Zmień hasło", oldPassword: "Stare hasło", oldPasswordRepeat: "Powtórz stare hasło", newPassword: "Wpisz nowe hasło", passwordChanged: "Hasło zmienione", changePasswordError: "Nie udało się zmienić hasła: ", confirmPassword: "Hasło potwierdzenia", taskTitle: "Nazwa zadania", description: "Opis", city: "Miasto", postalCode: "Kod", street: "Ulica", house: "Dom", apartment: "Mieszkanie", address: "Adres", price: "Cena", add: "Dodaj", employee: "pracownik", delete: "Usuń", restart: "Zacznij od nowa", confirmDelete: "Usunąć to zadanie?", resetError: "Nie udało się przywrócić zadania: ", deleteError: "Nie udało się usunąć zadania: ", createdAt: "Utworzono", acceptedAt: "Przyjęto", completedAt: "Wykonano", new: "Nowe", accepted: "Przyjęte", declined: "Odrzucone", completed: "Wykonane", refused: "Odmówił", payment: "Płatność", source: "Źródło", dispatcher: "Dyspozytor", client: "Klient", cash: "Gotówka", fromReserve: "Z rezerwy", save: "Zapisz", cancel: "Anuluj", phone: "Numer telefonu" }
     };
     function setLanguage(value) {
       language = value;
@@ -4197,8 +4218,8 @@ INDEX_HTML = r"""<!doctype html>
           <p>${t.phone ? "<strong>Телефон:</strong> <a href=\"tel:" + phoneHref(t.phone) + "\">" + escapeHtml(t.phone) + "</a>" : ""}</p>
           <p>${t.address ? "<strong>" + texts[language].address + ":</strong> " + escapeHtml(t.address) : ""}</p>
           <p>${appSettings.showPrices && Number(t.price) ? "<strong>" + texts[language].price + ":</strong> " + formatMoney(t.price) : ""}</p>
-          <p><strong>Оплата:</strong> ${paymentMethodName(t.paymentMethod)}</p>
-          <p class="meta"><strong>Источник:</strong> ${taskSource(t)}</p>
+          <p><strong>${texts[language].payment || "Оплата"}:</strong> ${paymentMethodName(t.paymentMethod)}</p>
+          <p class="meta"><strong>${texts[language].source || "Источник"}:</strong> ${taskSource(t)}</p>
           <p class="meta"><span class="${statusClass(t.status)}">${statusName(t.status)}</span> ${assignedEmployeeName(t)}</p>
           ${resetButton(t)}
           ${editButton(t)}
@@ -4219,9 +4240,11 @@ INDEX_HTML = r"""<!doctype html>
     }
     function taskSource(task) {
       if (task.source === "client") {
-        return escapeHtml(task.clientName || task.sourceName || task.clientLogin || "Клиент");
+        const name = task.clientName || task.sourceName || texts[language].client || "Клиент";
+        const login = loginWithoutPlus(task.clientLogin || "");
+        return escapeHtml(login ? name + ", " + login : name);
       }
-      return "Диспетчер";
+      return texts[language].dispatcher || "Диспетчер";
     }
     function taskDatePanel(task) {
       const rows = [];
@@ -4232,7 +4255,7 @@ INDEX_HTML = r"""<!doctype html>
       return `<div class="taskDates">${rows.map(row => `<span><strong>${row[0]}:</strong> ${formatCompactDate(row[1])}</span>`).join("")}</div>`;
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Из резерва";
+      return method === "cash" ? (texts[language].cash || "Наличные") : (texts[language].fromReserve || "Из резерва");
     }
     function assignedEmployeeName(task) {
       const parts = [task.assignedToName, task.assignedToLogin].filter(value => value && String(value).trim());
@@ -4267,9 +4290,6 @@ INDEX_HTML = r"""<!doctype html>
       }
       return `
         <form class="editTask" id="edit-task-${task.id}" style="display:none" onsubmit="saveTaskEdit(event, ${task.id})">
-          <input name="title" value="${escapeAttr(task.originalTitle || task.title || "")}" placeholder="${texts[language].taskTitle}" required>
-          <input name="description" value="${escapeAttr(task.originalDescription || task.description || "")}" placeholder="${texts[language].description}">
-          <input name="phone" value="${escapeAttr(task.originalPhone || task.phone || "")}" placeholder="Номер телефона" inputmode="tel">
           <div class="addressRow">
             <input name="city" value="${escapeAttr(task.city || "")}" placeholder="${texts[language].city}" required>
             <input name="postalCode" value="${escapeAttr(task.postalCode || "")}" placeholder="${texts[language].postalCode}">
@@ -4277,18 +4297,21 @@ INDEX_HTML = r"""<!doctype html>
             <input name="house" value="${escapeAttr(task.house || "")}" placeholder="${texts[language].house}">
             <input name="apartment" value="${escapeAttr(task.apartment || "")}" placeholder="${texts[language].apartment}">
           </div>
+          <input name="title" value="${escapeAttr(task.originalTitle || task.title || "")}" placeholder="${texts[language].taskTitle}" required>
+          <input name="description" value="${escapeAttr(task.originalDescription || task.description || "")}" placeholder="${texts[language].description}">
+          <input name="phone" value="${escapeAttr(task.originalPhone || task.phone || "")}" placeholder="${texts[language].phone || "Номер телефона"}" inputmode="tel">
           <input name="price" value="${escapeAttr(task.price || "")}" placeholder="${texts[language].price}" inputmode="decimal">
           <select name="paymentMethod">
-            <option value="card" ${(task.paymentMethod || "card") === "card" ? "selected" : ""}>Из резерва</option>
-            <option value="cash" ${task.paymentMethod === "cash" ? "selected" : ""}>Наличные</option>
-          </select>
-          <select name="clientId">
-            ${clientSourceOptions(task)}
+            <option value="card" ${(task.paymentMethod || "card") === "card" ? "selected" : ""}>${texts[language].fromReserve || "Из резерва"}</option>
+            <option value="cash" ${task.paymentMethod === "cash" ? "selected" : ""}>${texts[language].cash || "Наличные"}</option>
           </select>
           <div class="editTaskActions">
-            <button type="submit">Сохранить</button>
-            <button class="secondary" type="button" onclick="toggleTaskEdit(${task.id})">Отмена</button>
+            <button type="submit">${texts[language].save || "Сохранить"}</button>
+            <button class="secondary" type="button" onclick="toggleTaskEdit(${task.id})">${texts[language].cancel || "Отмена"}</button>
           </div>
+          <select class="clientSourceSelect" name="clientId">
+            ${clientSourceOptions(task)}
+          </select>
         </form>
       `;
     }
@@ -4341,6 +4364,9 @@ INDEX_HTML = r"""<!doctype html>
     }
     function phoneHref(value) {
       return String(value).replace(/[^\d+]/g, "");
+    }
+    function loginWithoutPlus(value) {
+      return String(value || "").replace(/^\+/, "");
     }
     document.querySelector("#form").addEventListener("submit", async event => {
       event.preventDefault();
