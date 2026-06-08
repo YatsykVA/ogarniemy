@@ -1276,6 +1276,31 @@ class App(BaseHTTPRequestHandler):
         reserve_available = float(report.get("totals", {}).get("reservePrice", 0) or 0)
         return reserve_available >= float(task_row["price"] or 0)
 
+    def client_available_reserve_for_new_card_task(self, client_id, exclude_task_id=None):
+        report = self.build_client_report(client_id)
+        reserve_available = float((report or {}).get("totals", {}).get("reservePrice", 0) or 0)
+        conn = db()
+        params = [client_id]
+        exclude_sql = ""
+        if exclude_task_id is not None:
+            exclude_sql = " and id != ?"
+            params.append(exclude_task_id)
+        row = conn.execute(
+            f"""
+            select coalesce(sum(price), 0) as reserved_price
+            from tasks
+            where client_id = ?
+              and client_settlement_id is null
+              and status in ('new', 'accepted')
+              and payment_method != 'cash'
+              {exclude_sql}
+            """,
+            params,
+        ).fetchone()
+        conn.close()
+        reserved_price = float(row["reserved_price"] or 0) if row else 0.0
+        return round(max(0.0, reserve_available - reserved_price), 2)
+
     def handle_admin_tasks(self):
         if not self.is_admin():
             self.send_json({"error": "admin_unauthorized"}, 401)
@@ -1388,8 +1413,7 @@ class App(BaseHTTPRequestHandler):
                 self.send_json({"error": "client_not_found"}, 404)
                 return
             if payment_method == "card":
-                report = self.build_client_report(client_id)
-                reserve_available = float((report or {}).get("totals", {}).get("reservePrice", 0) or 0)
+                reserve_available = self.client_available_reserve_for_new_card_task(client_id)
                 if reserve_available < float(price or 0):
                     conn.close()
                     self.send_json({"error": "client_reserve_too_low"}, 409)
@@ -1505,8 +1529,7 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"error": "task_not_new"}, 409)
             return
         if normalize_payment_method(row["payment_method"]) == "card":
-            report = self.build_client_report(client["id"])
-            reserve_available = float((report or {}).get("totals", {}).get("reservePrice", 0) or 0)
+            reserve_available = self.client_available_reserve_for_new_card_task(client["id"], task_id)
             if reserve_available < float(price or 0):
                 conn.close()
                 self.send_json({"error": "client_reserve_too_low"}, 409)
@@ -1769,6 +1792,12 @@ class App(BaseHTTPRequestHandler):
                 conn.close()
                 self.send_json({"error": "client_not_found"}, 404)
                 return
+            if payment_method == "card":
+                reserve_available = self.client_available_reserve_for_new_card_task(client_id, task_id)
+                if reserve_available < float(price or 0):
+                    conn.close()
+                    self.send_json({"error": "client_reserve_too_low"}, 409)
+                    return
 
         conn.execute(
             """
@@ -2807,7 +2836,11 @@ class App(BaseHTTPRequestHandler):
         reserve_used_for_completed = round(min(reserve_before_completed, completed_card_price), 2)
         reserve_price = round(max(0, reserve_before_completed - completed_card_price), 2)
         total_price = round(max(0, completed_card_price - reserve_before_completed), 2)
-        active_payment_due = round(max(0, active_card_price - reserve_price) + active_cash_price, 2)
+        active_payment_due = active_cash_price
+        reserved_card_price = round(active_card_price + sum(
+            task["price"] for task in new_tasks if task.get("paymentMethod", "card") != "cash"
+        ), 2)
+        available_reserve = round(max(0, reserve_price - reserved_card_price), 2)
         totals = {
             "grossTotalPrice": gross_total_price,
             "totalPrice": total_price,
@@ -2815,6 +2848,8 @@ class App(BaseHTTPRequestHandler):
             "activeCardPrice": active_card_price,
             "activeCashPrice": active_cash_price,
             "activePaymentDue": active_payment_due,
+            "reservedCardPrice": reserved_card_price,
+            "availableReserve": available_reserve,
             "completedPrice": completed_price,
             "completedCardPrice": completed_card_price,
             "completedCashPrice": completed_cash_price,
@@ -3895,6 +3930,9 @@ SERVER_LANGUAGE_TOOLS = r"""
     },
     ru: {}
   };
+  dict.en["Рассчитать всех"] = "Calculate all";
+  dict.uk["Рассчитать всех"] = "Розрахувати всіх";
+  dict.pl["Рассчитать всех"] = "Rozlicz wszystkich";
   const keysByLength = {};
   Object.keys(dict).forEach(lang => {
     keysByLength[lang] = Object.keys(dict[lang]).sort((a, b) => b.length - a.length);
@@ -4053,7 +4091,7 @@ INDEX_HTML = r"""<!doctype html>
     .mainTaskRow { display: contents; }
     .addressRow { display: grid; gap: 10px; grid-template-columns: repeat(5, minmax(110px, 1fr)); grid-column: 1 / -1; }
     button { background: linear-gradient(135deg, var(--teal), #2563eb); color: white; border: 0; cursor: pointer; font-weight: 700; box-shadow: 0 10px 24px rgba(15, 118, 110, 0.22); }
-    #form > button { height: 88px; display: flex; align-items: center; justify-content: center; text-align: center; }
+    #form .mainTaskRow > button { height: 88px; display: flex; align-items: center; justify-content: center; text-align: center; }
     .secondary { background: #fff0bf; color: #4a3200; box-shadow: none; margin-top: 8px; }
     .restart { background: #16a34a; color: white; box-shadow: 0 10px 24px rgba(22, 163, 74, 0.22); margin-top: 8px; }
     .danger { background: #ef4444; color: white; box-shadow: none; margin-top: 8px; margin-left: 8px; }
@@ -4122,7 +4160,7 @@ INDEX_HTML = r"""<!doctype html>
     let clientOptions = [];
     const texts = {
       ru: { serverTitle: "Задания", openUsers: "Сотрудники", completedTasks: "Выполненные задания", calculations: "Расчеты", changePassword: "Изменить пароль", oldPassword: "Старый пароль", oldPasswordRepeat: "Повторите старый пароль", newPassword: "Введите новый пароль", passwordChanged: "Пароль изменен", changePasswordError: "Не удалось изменить пароль: ", confirmPassword: "Пароль подтверждения", taskTitle: "Название задания", description: "Описание", city: "Город", postalCode: "Код", street: "Улица", house: "Дом", apartment: "Квартира", address: "Адрес", price: "Цена", add: "Добавить", employee: "сотрудник", delete: "Удалить", restart: "Начать заново", confirmDelete: "Удалить это задание?", resetError: "Не удалось вернуть задание: ", deleteError: "Не удалось удалить задание: ", createdAt: "Создано", acceptedAt: "Принято", completedAt: "Выполнено", new: "Новое", accepted: "Принято", declined: "Отклонено", completed: "Выполнено", refused: "Отказался", payment: "Оплата", source: "Источник", dispatcher: "Диспетчер", client: "Клиент", cash: "Наличные", fromReserve: "Из резерва", save: "Сохранить", cancel: "Отмена", phone: "Номер телефона" },
-      en: { serverTitle: "Tasks", openUsers: "Employees", completedTasks: "Completed tasks", calculations: "Calculations", changePassword: "Change password", oldPassword: "Old password", oldPasswordRepeat: "Repeat old password", newPassword: "Enter new password", passwordChanged: "Password changed", changePasswordError: "Could not change password: ", confirmPassword: "Confirmation password", taskTitle: "Task name", description: "Description", city: "City", postalCode: "Postal code", street: "Street", house: "House", apartment: "Apartment", address: "Address", price: "Price", add: "Add", employee: "employee", delete: "Delete", restart: "Start again", confirmDelete: "Delete this task?", resetError: "Could not return task: ", deleteError: "Could not delete task: ", createdAt: "Created", acceptedAt: "Accepted", completedAt: "Completed", new: "New", accepted: "Accepted", declined: "Declined", completed: "Completed", refused: "Refused", payment: "Payment", source: "Source", dispatcher: "Dispatcher", client: "Client", cash: "Cash", fromReserve: "From reserve", save: "Save", cancel: "Cancel", phone: "Phone number" },
+      en: { serverTitle: "Tasks", openUsers: "Employees", completedTasks: "Completed tasks", calculations: "Calculations", changePassword: "Change password", oldPassword: "Old password", oldPasswordRepeat: "Repeat old password", newPassword: "Enter new password", passwordChanged: "Password changed", changePasswordError: "Could not change password: ", confirmPassword: "Confirmation password", taskTitle: "Task name", description: "Description", city: "City", postalCode: "Postal code", street: "Street", house: "House", apartment: "Apartment", address: "Address", price: "Price", add: "Add", employee: "employee", delete: "Delete", restart: "Start again", confirmDelete: "Delete this task?", resetError: "Could not return task: ", deleteError: "Could not delete task: ", createdAt: "Created", acceptedAt: "Accepted", completedAt: "Completed", new: "New", accepted: "Accepted", declined: "Declined", completed: "Completed", refused: "Refused", payment: "Payment", source: "Source", acceptedBy: "Accepted by", dispatcher: "Dispatcher", client: "Client", cash: "Cash", fromReserve: "From reserve", save: "Save", cancel: "Cancel", phone: "Phone number" },
       uk: { serverTitle: "Завдання", openUsers: "Співробітники", completedTasks: "Виконані завдання", calculations: "Розрахунки", changePassword: "Змінити пароль", oldPassword: "Старий пароль", oldPasswordRepeat: "Повторіть старий пароль", newPassword: "Введіть новий пароль", passwordChanged: "Пароль змінено", changePasswordError: "Не вдалося змінити пароль: ", confirmPassword: "Пароль підтвердження", taskTitle: "Назва завдання", description: "Опис", city: "Місто", postalCode: "Код", street: "Вулиця", house: "Будинок", apartment: "Квартира", address: "Адреса", price: "Ціна", add: "Додати", employee: "співробітник", delete: "Видалити", restart: "Почати заново", confirmDelete: "Видалити це завдання?", resetError: "Не вдалося повернути завдання: ", deleteError: "Не вдалося видалити завдання: ", createdAt: "Створено", acceptedAt: "Прийнято", completedAt: "Виконано", new: "Нове", accepted: "Прийнято", declined: "Відхилено", completed: "Виконано", refused: "Відмовився", payment: "Оплата", source: "Джерело", dispatcher: "Диспетчер", client: "Клієнт", cash: "Готівка", fromReserve: "З резерву", save: "Зберегти", cancel: "Скасувати", phone: "Номер телефону" },
       pl: { serverTitle: "Zadania", openUsers: "Pracownicy", completedTasks: "Wykonane zadania", calculations: "Rozliczenia", changePassword: "Zmień hasło", oldPassword: "Stare hasło", oldPasswordRepeat: "Powtórz stare hasło", newPassword: "Wpisz nowe hasło", passwordChanged: "Hasło zmienione", changePasswordError: "Nie udało się zmienić hasła: ", confirmPassword: "Hasło potwierdzenia", taskTitle: "Nazwa zadania", description: "Opis", city: "Miasto", postalCode: "Kod", street: "Ulica", house: "Dom", apartment: "Mieszkanie", address: "Adres", price: "Cena", add: "Dodaj", employee: "pracownik", delete: "Usuń", restart: "Zacznij od nowa", confirmDelete: "Usunąć to zadanie?", resetError: "Nie udało się przywrócić zadania: ", deleteError: "Nie udało się usunąć zadania: ", createdAt: "Utworzono", acceptedAt: "Przyjęto", completedAt: "Wykonano", new: "Nowe", accepted: "Przyjęte", declined: "Odrzucone", completed: "Wykonane", refused: "Odmówił", payment: "Płatność", source: "Źródło", dispatcher: "Dyspozytor", client: "Klient", cash: "Gotówka", fromReserve: "Z rezerwy", save: "Zapisz", cancel: "Anuluj", phone: "Numer telefonu" }
     };
@@ -4219,8 +4257,9 @@ INDEX_HTML = r"""<!doctype html>
           <p>${t.address ? "<strong>" + texts[language].address + ":</strong> " + escapeHtml(t.address) : ""}</p>
           <p>${appSettings.showPrices && Number(t.price) ? "<strong>" + texts[language].price + ":</strong> " + formatMoney(t.price) : ""}</p>
           <p><strong>${texts[language].payment || "Оплата"}:</strong> ${paymentMethodName(t.paymentMethod)}</p>
-          <p class="meta"><strong>${texts[language].source || "Источник"}:</strong> ${taskSource(t)}</p>
-          <p class="meta"><span class="${statusClass(t.status)}">${statusName(t.status)}</span> ${assignedEmployeeName(t)}</p>
+          <p><strong>${texts[language].source || "Источник"}:</strong> ${taskSource(t)}</p>
+          ${acceptedEmployeeLine(t)}
+          <p class="meta"><span class="${statusClass(t.status)}">${statusName(t.status)}</span></p>
           ${resetButton(t)}
           ${editButton(t)}
           ${completeButton(t)}
@@ -4260,6 +4299,11 @@ INDEX_HTML = r"""<!doctype html>
     function assignedEmployeeName(task) {
       const parts = [task.assignedToName, task.assignedToLogin].filter(value => value && String(value).trim());
       return parts.length ? escapeHtml(parts.join(" ")) : "";
+    }
+    function acceptedEmployeeLine(task) {
+      const name = assignedEmployeeName(task);
+      const labels = { ru: "Кем принято", en: "Accepted by", uk: "Ким прийнято", pl: "Przyjete przez" };
+      return name ? `<p><strong>${texts[language].acceptedBy || labels[language] || labels.ru}:</strong> ${name}</p>` : "";
     }
     function clientSourceOptions(task) {
       const currentId = task.clientId || "";
@@ -4876,7 +4920,7 @@ USERS_HTML = r"""<!doctype html>
       <input id="userPassword" data-placeholder="password" placeholder="Пароль" required>
       <button data-i18n="add">Добавить</button>
     </form>
-    <button class="secondary" type="button" onclick="settleAllUsers()">Рассчитать всех</button>
+    <button class="secondary" type="button" onclick="settleAllUsers()" data-i18n="calculateAll">Рассчитать всех</button>
     <section id="users"></section>
   </main>
   <script>
@@ -4901,7 +4945,14 @@ USERS_HTML = r"""<!doctype html>
     }
     function applyLanguage() {
       document.querySelector("#languageSelect").value = language;
-      document.querySelectorAll("[data-i18n]").forEach(el => el.textContent = texts[language][el.dataset.i18n]);
+      const fallbackTexts = {
+        calculateAll: { ru: "Рассчитать всех", en: "Calculate all", uk: "Розрахувати всіх", pl: "Rozlicz wszystkich" }
+      };
+      document.querySelectorAll("[data-i18n]").forEach(el => {
+        const key = el.dataset.i18n;
+        const value = texts[language][key] || (fallbackTexts[key] && fallbackTexts[key][language]);
+        if (value) el.textContent = value;
+      });
       document.querySelectorAll("[data-placeholder]").forEach(el => el.placeholder = texts[language][el.dataset.placeholder]);
     }
     let adminPassword = sessionStorage.getItem("adminPassword") || "";
@@ -5398,7 +5449,7 @@ CLIENTS_HTML = r"""<!doctype html>
       <input id="clientPassword" placeholder="Пароль" required>
       <button>Добавить</button>
     </form>
-    <button class="secondary" type="button" onclick="settleAllClients()">Рассчитать всех</button>
+    <button class="secondary" type="button" onclick="settleAllClients()" data-i18n="calculateAll">Рассчитать всех</button>
     <section id="clients"></section>
   </main>
   <script>
