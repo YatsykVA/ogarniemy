@@ -4101,7 +4101,7 @@ INDEX_HTML = r"""<!doctype html>
     .editTask select { text-align-last: left; appearance: auto; }
     .editTask button { height: 88px; margin: 0; }
     .editTaskActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; grid-column: 5 / span 2; }
-    .editTask .clientSourceSelect { grid-column: 1 / -1; height: 48px; }
+    .editTask .clientSourceSelect { height: 88px; }
     nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     .language-corner { position: absolute; top: 18px; right: 20px; }
@@ -4145,8 +4145,8 @@ INDEX_HTML = r"""<!doctype html>
         <textarea id="phone" placeholder="Номер&#10;Телефона" inputmode="tel"></textarea>
         <input id="price" data-placeholder="price" placeholder="Цена" inputmode="decimal">
         <select id="paymentMethod">
-          <option value="cash">Наличные</option>
-          <option value="card">Из резерва</option>
+          <option value="cash" data-payment-label="cash">Наличные</option>
+          <option value="card" data-payment-label="fromReserve">Из резерва</option>
         </select>
         <button data-i18n="add">Добавить</button>
       </div>
@@ -4181,6 +4181,9 @@ INDEX_HTML = r"""<!doctype html>
       street.placeholder = texts[language].street;
       house.placeholder = texts[language].house;
       apartment.placeholder = texts[language].apartment;
+      document.querySelectorAll("[data-payment-label]").forEach(option => {
+        option.textContent = texts[language][option.dataset.paymentLabel] || option.textContent;
+      });
     }
     function statusName(status) {
       return texts[language][status] || status;
@@ -4308,7 +4311,7 @@ INDEX_HTML = r"""<!doctype html>
     function clientSourceOptions(task) {
       const currentId = task.clientId || "";
       return `
-        <option value="" ${currentId ? "" : "selected"}>Диспетчер</option>
+        <option value="" ${currentId ? "" : "selected"}>${texts[language].dispatcher || "Диспетчер"}</option>
         ${clientOptions.map(client => `
           <option value="${client.id}" ${String(currentId) === String(client.id) ? "selected" : ""}>
             ${escapeHtml(client.displayName || client.login || ("Клиент #" + client.id))}
@@ -4349,13 +4352,13 @@ INDEX_HTML = r"""<!doctype html>
             <option value="card" ${(task.paymentMethod || "card") === "card" ? "selected" : ""}>${texts[language].fromReserve || "Из резерва"}</option>
             <option value="cash" ${task.paymentMethod === "cash" ? "selected" : ""}>${texts[language].cash || "Наличные"}</option>
           </select>
+          <select class="clientSourceSelect" name="clientId" aria-label="${texts[language].client || "Клиент"}">
+            ${clientSourceOptions(task)}
+          </select>
           <div class="editTaskActions">
             <button type="submit">${texts[language].save || "Сохранить"}</button>
             <button class="secondary" type="button" onclick="toggleTaskEdit(${task.id})">${texts[language].cancel || "Отмена"}</button>
           </div>
-          <select class="clientSourceSelect" name="clientId">
-            ${clientSourceOptions(task)}
-          </select>
         </form>
       `;
     }
