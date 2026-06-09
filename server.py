@@ -5466,7 +5466,7 @@ CLIENTS_HTML = r"""<!doctype html>
         adminPassword = prompt("Admin password") || "";
         sessionStorage.setItem("adminPassword", adminPassword);
       }
-      return { "X-Admin-Password": adminPassword, ...extra };
+      return { "X-Admin-Password": adminPassword, "X-Language": currentLanguage(), ...extra };
     }
     async function requireAdminAccess(start) {
       while (true) {
@@ -5485,33 +5485,105 @@ CLIENTS_HTML = r"""<!doctype html>
     function escapeAttr(value) {
       return escapeHtml(value).replace(/"/g, "&quot;");
     }
+    const clientCalcTexts = {
+      ru: {
+        completed: "Выполнено", refused: "Отказался", accepted: "Принято", declined: "Отклонено", new: "Новое",
+        paid: "Оплачено", unpaid: "Не оплачено", settlementStatus: "Статус расчета", completedCount: "Выполнено",
+        refusedCount: "Отказался", activeCount: "В работе", totalTasks: "Всего заданий", settlementTotal: "Сумма расчета",
+        fullReport: "Полный отчет по расчету", completedWorks: "Выполненные работы", activeWorks: "Активные работы",
+        newWorks: "Новые работы", refusedWorks: "Отказанные работы", otherWorks: "Остальные работы",
+        reserveInSettlement: "Резерв в расчете", reserveBefore: "Резерв до расчета", reserveUsed: "Списано из резерва",
+        reserveLeft: "Остаток резерва", amountDue: "Сумма к оплате", reserveOperations: "Операции резерва",
+        noReserveOperations: "Нет операций резерва.", noRecords: "Нет записей.", phone: "Телефон", address: "Адрес",
+        acceptedBy: "Кто принял", price: "Цена", payment: "Оплата", status: "Статус", cash: "Наличные",
+        fromReserve: "Из резерва", created: "Создано", acceptedAt: "Принято", completedAt: "Выполнено",
+        noDate: "нет даты", deleteSettlement: "Удалить расчет", noSettlements: "Созданных расчетов пока нет. Новый расчет создается в разделе «Клиенты» кнопкой «Рассчитать».",
+        toReserve: "Из суммы к оплате в резерв", fromReserveToPay: "Из резерва в сумму к оплате",
+        topUp: "Пополнение резерва", completedFromReserve: "Выполненные работы из резерва"
+      },
+      en: {
+        completed: "Completed", refused: "Refused", accepted: "Accepted", declined: "Declined", new: "New",
+        paid: "Paid", unpaid: "Not paid", settlementStatus: "Payment status", completedCount: "Completed",
+        refusedCount: "Refused", activeCount: "In progress", totalTasks: "Total tasks", settlementTotal: "Payment total",
+        fullReport: "Full payment report", completedWorks: "Completed jobs", activeWorks: "Active jobs",
+        newWorks: "New jobs", refusedWorks: "Refused jobs", otherWorks: "Other jobs",
+        reserveInSettlement: "Reserve in payment", reserveBefore: "Reserve before payment", reserveUsed: "Written off from reserve",
+        reserveLeft: "Reserve left", amountDue: "Amount to pay", reserveOperations: "Reserve operations",
+        noReserveOperations: "No reserve operations.", noRecords: "No records.", phone: "Phone", address: "Address",
+        acceptedBy: "Accepted by", price: "Price", payment: "Payment", status: "Status", cash: "Cash",
+        fromReserve: "From reserve", created: "Created", acceptedAt: "Accepted", completedAt: "Completed",
+        noDate: "no date", deleteSettlement: "Delete payment", noSettlements: "No client payments have been created yet. Create a new payment in Clients with the Calculate button.",
+        toReserve: "From amount to pay to reserve", fromReserveToPay: "From reserve to amount to pay",
+        topUp: "Reserve top-up", completedFromReserve: "Completed jobs from reserve"
+      },
+      uk: {
+        completed: "Виконано", refused: "Відмовився", accepted: "Прийнято", declined: "Відхилено", new: "Нове",
+        paid: "Оплачено", unpaid: "Не оплачено", settlementStatus: "Статус розрахунку", completedCount: "Виконано",
+        refusedCount: "Відмовився", activeCount: "У роботі", totalTasks: "Усього завдань", settlementTotal: "Сума розрахунку",
+        fullReport: "Повний звіт за розрахунком", completedWorks: "Виконані роботи", activeWorks: "Активні роботи",
+        newWorks: "Нові роботи", refusedWorks: "Відмовлені роботи", otherWorks: "Інші роботи",
+        reserveInSettlement: "Резерв у розрахунку", reserveBefore: "Резерв до розрахунку", reserveUsed: "Списано з резерву",
+        reserveLeft: "Залишок резерву", amountDue: "Сума до оплати", reserveOperations: "Операції резерву",
+        noReserveOperations: "Операцій резерву немає.", noRecords: "Записів немає.", phone: "Телефон", address: "Адреса",
+        acceptedBy: "Ким прийнято", price: "Ціна", payment: "Оплата", status: "Статус", cash: "Готівка",
+        fromReserve: "З резерву", created: "Створено", acceptedAt: "Прийнято", completedAt: "Виконано",
+        noDate: "немає дати", deleteSettlement: "Видалити розрахунок", noSettlements: "Створених розрахунків поки немає. Новий розрахунок створюється в розділі «Клієнти» кнопкою «Розрахувати».",
+        toReserve: "Із суми до оплати в резерв", fromReserveToPay: "З резерву в суму до оплати",
+        topUp: "Поповнення резерву", completedFromReserve: "Виконані роботи з резерву"
+      },
+      pl: {
+        completed: "Wykonane", refused: "Odmówione", accepted: "Przyjęte", declined: "Odrzucone", new: "Nowe",
+        paid: "Opłacono", unpaid: "Nie opłacono", settlementStatus: "Status rozliczenia", completedCount: "Wykonane",
+        refusedCount: "Odmówione", activeCount: "W trakcie", totalTasks: "Łącznie zadań", settlementTotal: "Suma rozliczenia",
+        fullReport: "Pełny raport rozliczenia", completedWorks: "Wykonane prace", activeWorks: "Aktywne prace",
+        newWorks: "Nowe prace", refusedWorks: "Odmówione prace", otherWorks: "Pozostałe prace",
+        reserveInSettlement: "Rezerwa w rozliczeniu", reserveBefore: "Rezerwa przed rozliczeniem", reserveUsed: "Pobrano z rezerwy",
+        reserveLeft: "Pozostała rezerwa", amountDue: "Kwota do zapłaty", reserveOperations: "Operacje rezerwy",
+        noReserveOperations: "Brak operacji rezerwy.", noRecords: "Brak wpisów.", phone: "Telefon", address: "Adres",
+        acceptedBy: "Kto przyjął", price: "Cena", payment: "Płatność", status: "Status", cash: "Gotówka",
+        fromReserve: "Z rezerwy", created: "Utworzono", acceptedAt: "Przyjęto", completedAt: "Wykonano",
+        noDate: "brak daty", deleteSettlement: "Usuń rozliczenie", noSettlements: "Nie ma jeszcze utworzonych rozliczeń klientów. Nowe rozliczenie utworzysz w sekcji „Klienci” przyciskiem „Rozlicz”.",
+        toReserve: "Z kwoty do zapłaty do rezerwy", fromReserveToPay: "Z rezerwy do kwoty do zapłaty",
+        topUp: "Doładowanie rezerwy", completedFromReserve: "Wykonane prace z rezerwy"
+      }
+    };
+    function currentLanguage() {
+      return localStorage.getItem("language") || "ru";
+    }
+    function text(key) {
+      const language = currentLanguage();
+      return (clientCalcTexts[language] && clientCalcTexts[language][key]) || clientCalcTexts.ru[key] || key;
+    }
+    function localeName() {
+      const locales = { ru: "ru-RU", en: "en-US", uk: "uk-UA", pl: "pl-PL" };
+      return locales[currentLanguage()] || "ru-RU";
+    }
     function formatMoney(value) {
-      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
+      return new Intl.NumberFormat(localeName(), { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
       const labels = { credits: "CRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
-      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
+      return `${new Intl.NumberFormat(localeName(), { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function formatDate(value) {
-      if (!value) return "нет даты";
-      return new Date(value * 1000).toLocaleString("ru-RU");
+      if (!value) return text("noDate");
+      return new Date(value * 1000).toLocaleString(localeName());
     }
     function phoneHref(value) {
       return String(value).replace(/[^\d+]/g, "");
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Из резерва";
+      return method === "cash" ? text("cash") : text("fromReserve");
     }
     function taskStatusName(status) {
-      const names = { completed: "Выполнено", refused: "Отказался", accepted: "Принято", declined: "Отклонено", new: "Новое" };
-      return names[status] || status || "";
+      return text(status) || status || "";
     }
     function taskDatesMeta(task) {
       const rows = [];
-      if (task.createdAt) rows.push("Создано: " + formatDate(task.createdAt));
-      if (task.acceptedAt) rows.push("Принято: " + formatDate(task.acceptedAt));
-      if (task.completedAt) rows.push("Выполнено: " + formatDate(task.completedAt));
-      return rows.length ? rows.join(" · ") : "нет даты";
+      if (task.createdAt) rows.push(text("created") + ": " + formatDate(task.createdAt));
+      if (task.acceptedAt) rows.push(text("acceptedAt") + ": " + formatDate(task.acceptedAt));
+      if (task.completedAt) rows.push(text("completedAt") + ": " + formatDate(task.completedAt));
+      return rows.length ? rows.join(" · ") : text("noDate");
     }
     async function loadAppSettings() {
       const res = await fetch("/api/admin/settings", { headers: adminHeaders() });
@@ -5614,11 +5686,11 @@ CLIENTS_HTML = r"""<!doctype html>
         </div>
         ${appSettings.showPrices ? renderClientReserveTopUp(report.client.id) : ""}
         ${renderClientReserveEvents(report.currentReserveEvents || [])}
-        ${renderClientTaskSection("Выполненные работы", report.completed || [], "completed")}
-        ${renderClientTaskSection("В работе", report.active || [], "active")}
-        ${renderClientTaskSection("Новые работы", report.new || [], "new")}
-        ${renderClientTaskSection("Отказанные работы", report.refused || [], "refused")}
-        ${renderClientTaskSection("Остальные работы", report.other || [], "other")}
+        ${renderClientTaskSection(text("completedWorks"), report.completed || [], "completed")}
+        ${renderClientTaskSection(text("activeCount"), report.active || [], "active")}
+        ${renderClientTaskSection(text("newWorks"), report.new || [], "new")}
+        ${renderClientTaskSection(text("refusedWorks"), report.refused || [], "refused")}
+        ${renderClientTaskSection(text("otherWorks"), report.other || [], "other")}
       `;
     }
     function renderClientReserveBox(report) {
@@ -5628,7 +5700,7 @@ CLIENTS_HTML = r"""<!doctype html>
           <strong>${formatReserve(reserve)}</strong>
           <div class="reserveControls">
             <button class="secondary" type="button" disabled title="Временно отключено">-</button>
-            <span>Резерв</span>
+            <span>${text("reserveInSettlement")}</span>
             <button class="secondary" type="button" disabled title="Временно отключено">+</button>
           </div>
         </div>
@@ -5637,19 +5709,19 @@ CLIENTS_HTML = r"""<!doctype html>
     function renderClientReserveTopUp(clientId) {
       return `
         <section class="reportSection">
-          <h4>Пополнить резерв</h4>
+          <h4>${text("topUp")}</h4>
           <form onsubmit="clientReserveTopUp(event, ${clientId})">
-            <input name="amount" type="number" min="0.01" step="0.01" placeholder="Сумма" required>
-            <button type="submit">Пополнить</button>
+            <input name="amount" type="number" min="0.01" step="0.01" placeholder="${text("amountDue")}" required>
+            <button type="submit">${text("topUp")}</button>
           </form>
         </section>
       `;
     }
     function clientReserveEventName(kind) {
-      if (kind === "to_reserve") return "Из суммы к оплате в резерв";
-      if (kind === "from_reserve") return "Из резерва в сумму к оплате";
-      if (kind === "top_up") return "Пополнение резерва";
-      if (kind === "completed_from_reserve") return "Выполненные работы из резерва";
+      if (kind === "to_reserve") return text("toReserve");
+      if (kind === "from_reserve") return text("fromReserveToPay");
+      if (kind === "top_up") return text("topUp");
+      if (kind === "completed_from_reserve") return text("completedFromReserve");
       return kind;
     }
     function renderClientReserveEvents(events) {
@@ -5658,7 +5730,7 @@ CLIENTS_HTML = r"""<!doctype html>
       }
       return `
         <section class="reportSection">
-          <h4>Операции резерва</h4>
+          <h4>${text("reserveOperations")}</h4>
           ${events.map(event => `
             <p class="meta">${formatDate(event.createdAt)} · ${clientReserveEventName(event.kind)} · ${formatReserve(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
           `).join("")}
@@ -5705,7 +5777,7 @@ CLIENTS_HTML = r"""<!doctype html>
     }
     function renderClientTaskSection(title, tasks, type) {
       if (!tasks.length) {
-        return `<section class="reportSection"><h4>${title}</h4><p class="meta">Нет записей.</p></section>`;
+        return `<section class="reportSection"><h4>${title}</h4><p class="meta">${text("noRecords")}</p></section>`;
       }
       return `
         <section class="reportSection">
@@ -5715,12 +5787,12 @@ CLIENTS_HTML = r"""<!doctype html>
               <strong>#${task.id}</strong>
               <p><strong>${escapeHtml(task.title)}</strong></p>
               <p>${escapeHtml(task.description || "")}</p>
-              <p>${task.phone ? "<strong>Телефон:</strong> <a href=\"tel:" + phoneHref(task.phone) + "\">" + escapeHtml(task.phone) + "</a>" : ""}</p>
-              <p>${task.address ? "<strong>Адрес:</strong> " + escapeHtml(task.address) : ""}</p>
-              <p>${task.assignedToName ? "<strong>Кто принял:</strong> " + escapeHtml(task.assignedToName) + (task.assignedToLogin ? " · " + escapeHtml(task.assignedToLogin) : "") : ""}</p>
-              <p>${appSettings.showPrices ? "<strong>Цена:</strong> " + formatMoney(task.price || 0) : ""}</p>
-              <p><strong>Оплата:</strong> ${paymentMethodName(task.paymentMethod)}</p>
-              <div class="meta">Статус: ${taskStatusName(task.status)} · ${taskDatesMeta(task)}</div>
+              <p>${task.phone ? "<strong>" + text("phone") + ":</strong> <a href=\"tel:" + phoneHref(task.phone) + "\">" + escapeHtml(task.phone) + "</a>" : ""}</p>
+              <p>${task.address ? "<strong>" + text("address") + ":</strong> " + escapeHtml(task.address) : ""}</p>
+              <p>${task.assignedToName ? "<strong>" + text("acceptedBy") + ":</strong> " + escapeHtml(task.assignedToName) + (task.assignedToLogin ? " · " + escapeHtml(task.assignedToLogin) : "") : ""}</p>
+              <p>${appSettings.showPrices ? "<strong>" + text("price") + ":</strong> " + formatMoney(task.price || 0) : ""}</p>
+              <p><strong>${text("payment")}:</strong> ${paymentMethodName(task.paymentMethod)}</p>
+              <div class="meta">${text("status")}: ${taskStatusName(task.status)} · ${taskDatesMeta(task)}</div>
             </article>
           `).join("")}
         </section>
@@ -5816,6 +5888,11 @@ CLIENTS_HTML = r"""<!doctype html>
       await loadAppSettings();
       loadClients();
     });
+    document.addEventListener("change", event => {
+      if (event.target && event.target.id === "languageSelect") {
+        loadClients();
+      }
+    });
   </script>
 </body>
 </html>"""
@@ -5870,7 +5947,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
         adminPassword = prompt("Admin password") || "";
         sessionStorage.setItem("adminPassword", adminPassword);
       }
-      return { "X-Admin-Password": adminPassword, ...extra };
+      return { "X-Admin-Password": adminPassword, "X-Language": currentLanguage(), ...extra };
     }
     async function requireAdminAccess(start) {
       while (true) {
@@ -5886,25 +5963,35 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
     function escapeHtml(value) {
       return String(value).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
     }
+    const calcTexts = {
+      ru: { completed: "Выполнено", refused: "Отказался", accepted: "Принято", declined: "Отклонено", new: "Новое", paid: "Оплачено", unpaid: "Не оплачено", settlementStatus: "Статус расчета", completedCount: "Выполнено", refusedCount: "Отказался", activeCount: "В работе", totalTasks: "Всего заданий", settlementTotal: "Сумма расчета", fullReport: "Полный отчет по расчету", completedWorks: "Выполненные работы", activeWorks: "Активные работы", newWorks: "Новые работы", refusedWorks: "Отказанные работы", otherWorks: "Остальные работы", reserveInSettlement: "Резерв в расчете", reserveBefore: "Резерв до расчета", reserveUsed: "Списано из резерва", reserveLeft: "Остаток резерва", amountDue: "Сумма к оплате", reserveOperations: "Операции резерва", noReserveOperations: "Нет операций резерва.", noRecords: "Нет записей.", phone: "Телефон", address: "Адрес", acceptedBy: "Кто принял", price: "Цена", payment: "Оплата", status: "Статус", cash: "Наличные", fromReserve: "Из резерва", created: "Создано", acceptedAt: "Принято", completedAt: "Выполнено", noDate: "нет даты", deleteSettlement: "Удалить расчет", noSettlements: "Созданных расчетов пока нет. Новый расчет создается в разделе «Клиенты» кнопкой «Рассчитать».", toReserve: "Из суммы к оплате в резерв", fromReserveToPay: "Из резерва в сумму к оплате", topUp: "Пополнение резерва", completedFromReserve: "Выполненные работы из резерва" },
+      en: { completed: "Completed", refused: "Refused", accepted: "Accepted", declined: "Declined", new: "New", paid: "Paid", unpaid: "Not paid", settlementStatus: "Payment status", completedCount: "Completed", refusedCount: "Refused", activeCount: "In progress", totalTasks: "Total tasks", settlementTotal: "Payment total", fullReport: "Full payment report", completedWorks: "Completed jobs", activeWorks: "Active jobs", newWorks: "New jobs", refusedWorks: "Refused jobs", otherWorks: "Other jobs", reserveInSettlement: "Reserve in payment", reserveBefore: "Reserve before payment", reserveUsed: "Written off from reserve", reserveLeft: "Reserve left", amountDue: "Amount to pay", reserveOperations: "Reserve operations", noReserveOperations: "No reserve operations.", noRecords: "No records.", phone: "Phone", address: "Address", acceptedBy: "Accepted by", price: "Price", payment: "Payment", status: "Status", cash: "Cash", fromReserve: "From reserve", created: "Created", acceptedAt: "Accepted", completedAt: "Completed", noDate: "no date", deleteSettlement: "Delete payment", noSettlements: "No client payments have been created yet. Create a new payment in Clients with the Calculate button.", toReserve: "From amount to pay to reserve", fromReserveToPay: "From reserve to amount to pay", topUp: "Reserve top-up", completedFromReserve: "Completed jobs from reserve" },
+      uk: { completed: "Виконано", refused: "Відмовився", accepted: "Прийнято", declined: "Відхилено", new: "Нове", paid: "Оплачено", unpaid: "Не оплачено", settlementStatus: "Статус розрахунку", completedCount: "Виконано", refusedCount: "Відмовився", activeCount: "У роботі", totalTasks: "Усього завдань", settlementTotal: "Сума розрахунку", fullReport: "Повний звіт за розрахунком", completedWorks: "Виконані роботи", activeWorks: "Активні роботи", newWorks: "Нові роботи", refusedWorks: "Відмовлені роботи", otherWorks: "Інші роботи", reserveInSettlement: "Резерв у розрахунку", reserveBefore: "Резерв до розрахунку", reserveUsed: "Списано з резерву", reserveLeft: "Залишок резерву", amountDue: "Сума до оплати", reserveOperations: "Операції резерву", noReserveOperations: "Операцій резерву немає.", noRecords: "Записів немає.", phone: "Телефон", address: "Адреса", acceptedBy: "Ким прийнято", price: "Ціна", payment: "Оплата", status: "Статус", cash: "Готівка", fromReserve: "З резерву", created: "Створено", acceptedAt: "Прийнято", completedAt: "Виконано", noDate: "немає дати", deleteSettlement: "Видалити розрахунок", noSettlements: "Створених розрахунків поки немає. Новий розрахунок створюється в розділі «Клієнти» кнопкою «Розрахувати».", toReserve: "Із суми до оплати в резерв", fromReserveToPay: "З резерву в суму до оплати", topUp: "Поповнення резерву", completedFromReserve: "Виконані роботи з резерву" },
+      pl: { completed: "Wykonane", refused: "Odmówione", accepted: "Przyjęte", declined: "Odrzucone", new: "Nowe", paid: "Opłacono", unpaid: "Nie opłacono", settlementStatus: "Status rozliczenia", completedCount: "Wykonane", refusedCount: "Odmówione", activeCount: "W trakcie", totalTasks: "Łącznie zadań", settlementTotal: "Suma rozliczenia", fullReport: "Pełny raport rozliczenia", completedWorks: "Wykonane prace", activeWorks: "Aktywne prace", newWorks: "Nowe prace", refusedWorks: "Odmówione prace", otherWorks: "Pozostałe prace", reserveInSettlement: "Rezerwa w rozliczeniu", reserveBefore: "Rezerwa przed rozliczeniem", reserveUsed: "Pobrano z rezerwy", reserveLeft: "Pozostała rezerwa", amountDue: "Kwota do zapłaty", reserveOperations: "Operacje rezerwy", noReserveOperations: "Brak operacji rezerwy.", noRecords: "Brak wpisów.", phone: "Telefon", address: "Adres", acceptedBy: "Kto przyjął", price: "Cena", payment: "Płatność", status: "Status", cash: "Gotówka", fromReserve: "Z rezerwy", created: "Utworzono", acceptedAt: "Przyjęto", completedAt: "Wykonano", noDate: "brak daty", deleteSettlement: "Usuń rozliczenie", noSettlements: "Nie ma jeszcze utworzonych rozliczeń klientów. Nowe rozliczenie utworzysz w sekcji „Klienci” przyciskiem „Rozlicz”.", toReserve: "Z kwoty do zapłaty do rezerwy", fromReserveToPay: "Z rezerwy do kwoty do zapłaty", topUp: "Doładowanie rezerwy", completedFromReserve: "Wykonane prace z rezerwy" }
+    };
+    function currentLanguage() {
+      return localStorage.getItem("language") || "ru";
+    }
+    function text(key) {
+      const language = currentLanguage();
+      return (calcTexts[language] && calcTexts[language][key]) || calcTexts.ru[key] || key;
+    }
+    function localeName() {
+      const locales = { ru: "ru-RU", en: "en-US", uk: "uk-UA", pl: "pl-PL" };
+      return locales[currentLanguage()] || "ru-RU";
+    }
     function taskStatusName(status) {
-      const names = {
-        completed: "Выполнено",
-        refused: "Отказался",
-        accepted: "Принято",
-        declined: "Отклонено",
-        new: "Новое"
-      };
-      return names[status] || status || "";
+      return text(status) || status || "";
     }
     function formatMoney(value) {
-      return new Intl.NumberFormat("ru-RU", { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
+      return new Intl.NumberFormat(localeName(), { style: "currency", currency: appSettings.currency || "PLN" }).format(Number(value || 0));
     }
     function formatReserve(value) {
       const labels = { credits: "CRDT", tokens: "TKN", coins: "KOIN", points: "BAL" };
-      return `${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
+      return `${new Intl.NumberFormat(localeName(), { maximumFractionDigits: 2 }).format(Number(value || 0))} ${labels[appSettings.reserveUnit] || labels.credits}`;
     }
     function calculationStatus(item) {
-      return item && item.calculated ? "Оплачено" : "Не оплачено";
+      return item && item.calculated ? text("paid") : text("unpaid");
     }
     function calculationClass(item) {
       return item && item.calculated ? " calculated" : "";
@@ -5913,7 +6000,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       if (item.calculated) {
         return "";
       }
-      return `<button class="success" type="button" onclick="calculateClientSettlement(${item.id})">Оплачено</button>`;
+      return `<button class="success" type="button" onclick="calculateClientSettlement(${item.id})">${text("paid")}</button>`;
     }
     async function loadAppSettings() {
       const res = await fetch("/api/admin/settings", { headers: adminHeaders() });
@@ -5929,24 +6016,24 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       const history = (data.settlements || []).map(item => `
         <article class="item${calculationClass(item)}">
           <h3>#${item.id} ${escapeHtml(item.displayName)} · ${formatDate(item.createdAt)}</h3>
-          <p class="status">Статус расчета: ${calculationStatus(item)}</p>
-          <p class="meta">Выполнено: ${item.counts.completed || 0} · Отказался: ${item.counts.refused || 0} · В работе: ${item.counts.active || 0} · Всего заданий: ${item.counts.all || 0}</p>
-          <p>${appSettings.showPrices ? "<strong>Сумма расчета:</strong> " + formatMoney(item.totals.totalPrice || 0) : ""}</p>
+          <p class="status">${text("settlementStatus")}: ${calculationStatus(item)}</p>
+          <p class="meta">${text("completedCount")}: ${item.counts.completed || 0} · ${text("refusedCount")}: ${item.counts.refused || 0} · ${text("activeCount")}: ${item.counts.active || 0} · ${text("totalTasks")}: ${item.counts.all || 0}</p>
+          <p>${appSettings.showPrices ? "<strong>" + text("settlementTotal") + ":</strong> " + formatMoney(item.totals.totalPrice || 0) : ""}</p>
           ${renderClientReport(item)}
-          <div class="actions">${calculateClientSettlementButton(item)}<button class="danger" type="button" onclick="deleteClientSettlement(${item.id})">Удалить расчет</button></div>
+          <div class="actions">${calculateClientSettlementButton(item)}<button class="danger" type="button" onclick="deleteClientSettlement(${item.id})">${text("deleteSettlement")}</button></div>
         </article>
       `).join("");
-      items.innerHTML = history || "<p class=\"meta\">Созданных расчетов пока нет. Новый расчет создается в разделе «Клиенты» кнопкой «Рассчитать».</p>";
+      items.innerHTML = history || `<p class="meta">${text("noSettlements")}</p>`;
     }
     function renderClientReport(item) {
       return `
         <details>
-          <summary>Полный отчет по расчету</summary>
-          ${renderTaskSection("Выполненные работы", item.completed || [], "completed")}
-          ${renderTaskSection("Активные работы", item.active || [], "active")}
-          ${renderTaskSection("Новые работы", item.new || [], "new")}
-          ${renderTaskSection("Отказанные работы", item.refused || [], "refused")}
-          ${renderTaskSection("Остальные работы", item.other || [], "other")}
+          <summary>${text("fullReport")}</summary>
+          ${renderTaskSection(text("completedWorks"), item.completed || [], "completed")}
+          ${renderTaskSection(text("activeWorks"), item.active || [], "active")}
+          ${renderTaskSection(text("newWorks"), item.new || [], "new")}
+          ${renderTaskSection(text("refusedWorks"), item.refused || [], "refused")}
+          ${renderTaskSection(text("otherWorks"), item.other || [], "other")}
           ${renderReserveSummary(item)}
           ${renderReserveEvents(item.currentReserveEvents || item.reserveEvents || [])}
         </details>
@@ -5958,26 +6045,26 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       }
       const totals = item.totals || {};
       return `
-        <h4>Резерв в расчете</h4>
-        <p class="meta">Резерв до расчета: ${formatReserve(totals.reserveBeforeCompleted || 0)} · Списано из резерва: ${formatReserve(totals.reserveUsedForCompleted || 0)} · Остаток резерва: ${formatReserve(totals.reservePrice || 0)} · Сумма к оплате: ${formatMoney(totals.totalPrice || 0)}</p>
+        <h4>${text("reserveInSettlement")}</h4>
+        <p class="meta">${text("reserveBefore")}: ${formatReserve(totals.reserveBeforeCompleted || 0)} · ${text("reserveUsed")}: ${formatReserve(totals.reserveUsedForCompleted || 0)} · ${text("reserveLeft")}: ${formatReserve(totals.reservePrice || 0)} · ${text("amountDue")}: ${formatMoney(totals.totalPrice || 0)}</p>
       `;
     }
     function reserveEventName(kind) {
-      if (kind === "to_reserve") return "Из суммы к оплате в резерв";
-      if (kind === "from_reserve") return "Из резерва в сумму к оплате";
-      if (kind === "top_up") return "Пополнение резерва";
-      if (kind === "completed_from_reserve") return "Выполненные работы из резерва";
+      if (kind === "to_reserve") return text("toReserve");
+      if (kind === "from_reserve") return text("fromReserveToPay");
+      if (kind === "top_up") return text("topUp");
+      if (kind === "completed_from_reserve") return text("completedFromReserve");
       return kind;
     }
     function renderReserveEvents(events) {
       if (!events.length) {
         return `
-          <h4>Операции резерва</h4>
-          <p class="meta">Нет операций резерва.</p>
+          <h4>${text("reserveOperations")}</h4>
+          <p class="meta">${text("noReserveOperations")}</p>
         `;
       }
       return `
-        <h4>Операции резерва</h4>
+        <h4>${text("reserveOperations")}</h4>
         ${events.map(event => `
           <p class="meta">${formatDate(event.createdAt)} · ${reserveEventName(event.kind)} · ${formatReserve(event.absoluteAmount ?? Math.abs(event.amount || 0))}</p>
         `).join("")}
@@ -5985,7 +6072,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
     }
     function renderTaskSection(title, tasks, type) {
       if (!tasks.length) {
-        return `<h4>${title}</h4><p class="meta">Нет записей.</p>`;
+        return `<h4>${title}</h4><p class="meta">${text("noRecords")}</p>`;
       }
       return `
         <h4>${title}</h4>
@@ -5994,12 +6081,12 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
             <strong>#${task.id}</strong>
             <p><strong>${escapeHtml(task.title)}</strong></p>
             <p>${escapeHtml(task.description || "")}</p>
-            <p>${task.phone ? "<strong>Телефон:</strong> <a href=\"tel:" + phoneHref(task.phone) + "\">" + escapeHtml(task.phone) + "</a>" : ""}</p>
-            <p>${task.address ? "<strong>Адрес:</strong> " + escapeHtml(task.address) : ""}</p>
-            <p>${task.assignedToName ? "<strong>Кто принял:</strong> " + escapeHtml(task.assignedToName) + (task.assignedToLogin ? " · " + escapeHtml(task.assignedToLogin) : "") : ""}</p>
-            <p>${appSettings.showPrices ? "<strong>Цена:</strong> " + formatMoney(task.price || 0) : ""}</p>
-            <p><strong>Оплата:</strong> ${paymentMethodName(task.paymentMethod)}</p>
-            <div class="meta">Статус: ${taskStatusName(task.status)} · ${taskDatesMeta(task)}</div>
+            <p>${task.phone ? "<strong>" + text("phone") + ":</strong> <a href=\"tel:" + phoneHref(task.phone) + "\">" + escapeHtml(task.phone) + "</a>" : ""}</p>
+            <p>${task.address ? "<strong>" + text("address") + ":</strong> " + escapeHtml(task.address) : ""}</p>
+            <p>${task.assignedToName ? "<strong>" + text("acceptedBy") + ":</strong> " + escapeHtml(task.assignedToName) + (task.assignedToLogin ? " · " + escapeHtml(task.assignedToLogin) : "") : ""}</p>
+            <p>${appSettings.showPrices ? "<strong>" + text("price") + ":</strong> " + formatMoney(task.price || 0) : ""}</p>
+            <p><strong>${text("payment")}:</strong> ${paymentMethodName(task.paymentMethod)}</p>
+            <div class="meta">${text("status")}: ${taskStatusName(task.status)} · ${taskDatesMeta(task)}</div>
           </article>
         `).join("")}
       `;
@@ -6008,17 +6095,17 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
       return String(value).replace(/[^\d+]/g, "");
     }
     function paymentMethodName(method) {
-      return method === "cash" ? "Наличные" : "Из резерва";
+      return method === "cash" ? text("cash") : text("fromReserve");
     }
     function taskDatesMeta(task) {
       const rows = [];
-      if (task.createdAt) rows.push("Создано: " + formatDate(task.createdAt));
-      if (task.acceptedAt) rows.push("Принято: " + formatDate(task.acceptedAt));
-      if (task.completedAt) rows.push("Выполнено: " + formatDate(task.completedAt));
-      return rows.length ? rows.join(" · ") : "нет даты";
+      if (task.createdAt) rows.push(text("created") + ": " + formatDate(task.createdAt));
+      if (task.acceptedAt) rows.push(text("acceptedAt") + ": " + formatDate(task.acceptedAt));
+      if (task.completedAt) rows.push(text("completedAt") + ": " + formatDate(task.completedAt));
+      return rows.length ? rows.join(" · ") : text("noDate");
     }
     function formatDate(value) {
-      return new Date(value * 1000).toLocaleString("ru-RU");
+      return new Date(value * 1000).toLocaleString(localeName());
     }
     async function settleClient(id) {
       const password = prompt("Пароль подтверждения");
@@ -6065,6 +6152,11 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
     requireAdminAccess(async () => {
       await loadAppSettings();
       loadCalculations();
+    });
+    document.addEventListener("change", event => {
+      if (event.target && event.target.id === "languageSelect") {
+        loadCalculations();
+      }
     });
   </script>
 </body>
