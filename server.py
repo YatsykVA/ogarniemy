@@ -23,6 +23,7 @@ RETENTION_DEFAULT_DAYS = 365
 RETENTION_MIN_DAYS = 1
 RETENTION_MAX_DAYS = 365
 CLEANUP_INTERVAL_SECONDS = 60 * 60
+MARKETING_BOT_ENABLED = os.environ.get("MARKETING_BOT_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def db():
@@ -224,6 +225,25 @@ def start_cleanup_worker():
             time.sleep(CLEANUP_INTERVAL_SECONDS)
 
     thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
+
+
+def start_marketing_bot_worker():
+    if not MARKETING_BOT_ENABLED:
+        return
+    if not os.environ.get("TELEGRAM_BOT_TOKEN"):
+        print("Marketing bot is enabled, but TELEGRAM_BOT_TOKEN is missing.")
+        return
+
+    def run():
+        try:
+            import marketing_bot
+
+            marketing_bot.run_telegram_polling()
+        except Exception as exc:
+            print(f"Marketing bot stopped: {exc}")
+
+    thread = threading.Thread(target=run, daemon=True)
     thread.start()
 
 
@@ -6395,6 +6415,7 @@ if __name__ == "__main__":
     init_db()
     cleanup_expired_data()
     start_cleanup_worker()
+    start_marketing_bot_worker()
     print(f"Task server started: http://localhost:{PORT}")
     print(f"Admin password: {ADMIN_PASSWORD}")
     ThreadingHTTPServer((HOST, PORT), App).serve_forever()
