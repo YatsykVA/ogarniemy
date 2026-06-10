@@ -1,6 +1,7 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlencode, urlparse
 from urllib.request import urlopen
+import base64
 import hashlib
 import json
 import mimetypes
@@ -9,6 +10,7 @@ import secrets
 import sqlite3
 import threading
 import time
+import uuid
 
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -3449,6 +3451,42 @@ class App(BaseHTTPRequestHandler):
                         "insert into facebook_targets(name, city, target_id, notes, enabled, created_at) values(?, ?, ?, ?, ?, ?)",
                         (str(data.get("name", "")).strip(), str(data.get("city", "")).strip(), str(data.get("targetId", "")).strip(), str(data.get("notes", "")).strip(), 1 if data.get("enabled", True) else 0, now),
                     )
+            elif action == "upload-image":
+                content_type = str(data.get("contentType", "")).split(";", 1)[0].strip().lower()
+                allowed = {
+                    "image/jpeg": ".jpg",
+                    "image/png": ".png",
+                    "image/webp": ".webp",
+                    "image/gif": ".gif",
+                }
+                if content_type not in allowed:
+                    self.send_json({"error": "bad_image_type"}, 400)
+                    return
+                encoded = str(data.get("content", ""))
+                if "," in encoded:
+                    encoded = encoded.split(",", 1)[1]
+                try:
+                    body = base64.b64decode(encoded, validate=True)
+                except (ValueError, TypeError):
+                    self.send_json({"error": "bad_image"}, 400)
+                    return
+                if not body or len(body) > 5 * 1024 * 1024:
+                    self.send_json({"error": "image_too_large"}, 400)
+                    return
+                folder = os.path.join(ROOT, "assets", "marketing")
+                os.makedirs(folder, exist_ok=True)
+                filename = f"{platform}-{int(time.time())}-{uuid.uuid4().hex}{allowed[content_type]}"
+                path = os.path.abspath(os.path.join(folder, filename))
+                if os.path.commonpath([folder, path]) != folder:
+                    self.send_json({"error": "bad_path"}, 400)
+                    return
+                with open(path, "wb") as file:
+                    file.write(body)
+                host = self.headers.get("X-Forwarded-Host") or self.headers.get("Host") or "www.ogarniemy.pro"
+                proto = self.headers.get("X-Forwarded-Proto") or ("http" if host.startswith(("127.0.0.1", "localhost")) else "https")
+                conn.close()
+                self.send_json({"ok": True, "url": f"{proto}://{host}/assets/marketing/{filename}"})
+                return
             elif action == "message":
                 message_id = data.get("id")
                 values = (platform, str(data.get("title", "")).strip() or "Реклама", str(data.get("audience", "all")).strip() or "all", str(data.get("body", "")).strip(), str(data.get("imageUrl", "")).strip(), 1 if data.get("enabled", True) else 0, now)
@@ -6375,6 +6413,10 @@ MARKETING_PAGE_STYLE = r"""
     .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     input, textarea, select { width: 100%; box-sizing: border-box; font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(23,32,38,.18); background: white; }
     textarea { min-height: 120px; resize: vertical; }
+    label.field { display: grid; gap: 6px; color: var(--muted); font-size: 13px; font-weight: 700; }
+    label.field input, label.field textarea, label.field select { color: var(--ink); font-size: 16px; font-weight: 400; }
+    .upload-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); gap: 10px; align-items: end; }
+    .upload-status { min-height: 18px; margin: -4px 0 0; }
     button { font: inherit; padding: 11px 13px; border-radius: 8px; border: 0; background: linear-gradient(135deg, var(--teal), #2563eb); color: white; cursor: pointer; font-weight: 700; }
     button.secondary { background: #475569; }
     button.success { background: #16a34a; }
@@ -6385,7 +6427,7 @@ MARKETING_PAGE_STYLE = r"""
     .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; background: #e0f2fe; margin: 3px 4px 3px 0; font-size: 13px; font-weight: 700; }
     .preview { max-width: 220px; border-radius: 8px; border: 1px solid rgba(23,32,38,.12); margin-top: 8px; display: block; }
     .note { background: rgba(15,118,110,.1); border-left: 5px solid var(--teal); padding: 12px; border-radius: 8px; }
-    @media (max-width: 980px) { nav, .grid, .row { grid-template-columns: 1fr; } .full { grid-column: auto; } }
+    @media (max-width: 980px) { nav, .grid, .row, .upload-row { grid-template-columns: 1fr; } .full { grid-column: auto; } }
 """
 
 
@@ -6397,11 +6439,13 @@ MARKETING_PAGE_SCRIPT = r"""
         "Реклама Telegram": "Telegram Ads",
         "Реклама Facebook": "Facebook Ads",
         "Города": "Cities",
+        "Город": "City",
         "Добавить город": "Add city",
         "Добавить Telegram-чат": "Add Telegram chat",
         "Название группы": "Group name",
         "Chat ID, например -100...": "Chat ID, for example -100...",
         "мастер, сантехник, электрик, ремонт": "handyman, plumber, electrician, repair",
+        "Ключевые слова": "Keywords",
         "Чат включен: бот может отправлять рекламу в этот чат": "Chat enabled: the bot can send ads to this chat",
         "Сохранить чат": "Save chat",
         "Рекламный текст и картинка": "Ad text and image",
@@ -6414,9 +6458,16 @@ MARKETING_PAGE_SCRIPT = r"""
         "Текст рекламы / Messenger-ответ": "Ad text / Messenger reply",
         "Ссылка на картинку, например https://ogarniemy.pro/assets/banner.jpg": "Image link, for example https://ogarniemy.pro/assets/banner.jpg",
         "Ссылка на картинку": "Image link",
+        "Картинка с компьютера": "Image from computer",
+        "Загрузить картинку с компьютера": "Upload image from computer",
+        "Картинка загружена.": "Image uploaded.",
+        "Не удалось загрузить картинку.": "Could not upload image.",
         "Сохранить рекламный материал": "Save ad material",
         "Расписание": "Schedule",
         "Расписание подготовки": "Preparation schedule",
+        "Расписание отправки": "Sending schedule",
+        "Время отправки": "Sending time",
+        "Рекламный материал": "Ad material",
         "Расписание включено: отправлять каждый день в это время": "Schedule enabled: send every day at this time",
         "Расписание включено: готовить материал каждый день в это время": "Schedule enabled: prepare material every day at this time",
         "Сохранить время": "Save time",
@@ -6445,23 +6496,28 @@ MARKETING_PAGE_SCRIPT = r"""
         "Facebook отправка подготовлена.": "Facebook delivery prepared.",
         "Facebook лучше использовать как входящий канал: реклама ведет в Messenger или на сайт, бот отвечает тем, кто сам написал. Массовые ежедневные личные сообщения незнакомым людям Facebook ограничивает.": "Facebook is best used as an inbound channel: ads lead to Messenger or the site, and the bot replies to people who contacted you first. Facebook restricts daily mass private messages to strangers.",
         "Facebook-цели": "Facebook targets",
+        "Facebook группы": "Facebook groups",
+        "Добавить Facebook в группу": "Add Facebook group",
         "Страница / кампания / группа": "Page / campaign / group",
+        "Страница / группа / ссылка": "Page / group / link",
         "ID или ссылка": "ID or link",
         "Заметки: аудитория, бюджет, что проверить": "Notes: audience, budget, what to check",
-        "Цель включена: можно использовать в планировании Facebook": "Target enabled: it can be used in Facebook planning",
-        "Сохранить цель": "Save target",
+        "Группа включена: можно использовать в планировании Facebook": "Group enabled: it can be used in Facebook planning",
+        "Сохранить группу": "Save group",
         "Подготовить сейчас": "Prepare now",
-        "Цели пока не добавлены.": "No targets added yet."
+        "Группы пока не добавлены.": "No groups added yet."
       },
       uk: {
         "Реклама Telegram": "Реклама Telegram",
         "Реклама Facebook": "Реклама Facebook",
         "Города": "Міста",
+        "Город": "Місто",
         "Добавить город": "Додати місто",
         "Добавить Telegram-чат": "Додати Telegram-чат",
         "Название группы": "Назва групи",
         "Chat ID, например -100...": "Chat ID, наприклад -100...",
         "мастер, сантехник, электрик, ремонт": "майстер, сантехнік, електрик, ремонт",
+        "Ключевые слова": "Ключові слова",
         "Чат включен: бот может отправлять рекламу в этот чат": "Чат увімкнено: бот може надсилати рекламу в цей чат",
         "Сохранить чат": "Зберегти чат",
         "Рекламный текст и картинка": "Рекламний текст і картинка",
@@ -6474,9 +6530,16 @@ MARKETING_PAGE_SCRIPT = r"""
         "Текст рекламы / Messenger-ответ": "Текст реклами / відповідь Messenger",
         "Ссылка на картинку, например https://ogarniemy.pro/assets/banner.jpg": "Посилання на картинку, наприклад https://ogarniemy.pro/assets/banner.jpg",
         "Ссылка на картинку": "Посилання на картинку",
+        "Картинка с компьютера": "Картинка з комп'ютера",
+        "Загрузить картинку с компьютера": "Завантажити картинку з комп'ютера",
+        "Картинка загружена.": "Картинку завантажено.",
+        "Не удалось загрузить картинку.": "Не вдалося завантажити картинку.",
         "Сохранить рекламный материал": "Зберегти рекламний матеріал",
         "Расписание": "Розклад",
         "Расписание подготовки": "Розклад підготовки",
+        "Расписание отправки": "Розклад відправки",
+        "Время отправки": "Час відправки",
+        "Рекламный материал": "Рекламний матеріал",
         "Расписание включено: отправлять каждый день в это время": "Розклад увімкнено: надсилати щодня в цей час",
         "Расписание включено: готовить материал каждый день в это время": "Розклад увімкнено: готувати матеріал щодня в цей час",
         "Сохранить время": "Зберегти час",
@@ -6504,22 +6567,27 @@ MARKETING_PAGE_SCRIPT = r"""
         "Facebook отправка подготовлена.": "Facebook-відправку підготовлено.",
         "Facebook лучше использовать как входящий канал: реклама ведет в Messenger или на сайт, бот отвечает тем, кто сам написал. Массовые ежедневные личные сообщения незнакомым людям Facebook ограничивает.": "Facebook краще використовувати як вхідний канал: реклама веде в Messenger або на сайт, а бот відповідає тим, хто сам написав. Facebook обмежує масові щоденні особисті повідомлення незнайомим людям.",
         "Facebook-цели": "Facebook-цілі",
+        "Facebook группы": "Facebook-групи",
+        "Добавить Facebook в группу": "Додати Facebook у групу",
         "Страница / кампания / группа": "Сторінка / кампанія / група",
+        "Страница / группа / ссылка": "Сторінка / група / посилання",
         "ID или ссылка": "ID або посилання",
         "Заметки: аудитория, бюджет, что проверить": "Нотатки: аудиторія, бюджет, що перевірити",
-        "Цель включена: можно использовать в планировании Facebook": "Ціль увімкнено: можна використовувати в плануванні Facebook",
-        "Сохранить цель": "Зберегти ціль",
-        "Цели пока не добавлены.": "Цілі ще не додані."
+        "Группа включена: можно использовать в планировании Facebook": "Групу увімкнено: можна використовувати в плануванні Facebook",
+        "Сохранить группу": "Зберегти групу",
+        "Группы пока не добавлены.": "Групи ще не додані."
       },
       pl: {
         "Реклама Telegram": "Reklama Telegram",
         "Реклама Facebook": "Reklama Facebook",
         "Города": "Miasta",
+        "Город": "Miasto",
         "Добавить город": "Dodaj miasto",
         "Добавить Telegram-чат": "Dodaj czat Telegram",
         "Название группы": "Nazwa grupy",
         "Chat ID, например -100...": "Chat ID, na przykład -100...",
         "мастер, сантехник, электрик, ремонт": "fachowiec, hydraulik, elektryk, naprawa",
+        "Ключевые слова": "Słowa kluczowe",
         "Чат включен: бот может отправлять рекламу в этот чат": "Czat włączony: bot może wysyłać reklamy na ten czat",
         "Сохранить чат": "Zapisz czat",
         "Рекламный текст и картинка": "Tekst reklamowy i obraz",
@@ -6532,9 +6600,16 @@ MARKETING_PAGE_SCRIPT = r"""
         "Текст рекламы / Messenger-ответ": "Tekst reklamy / odpowiedź Messenger",
         "Ссылка на картинку, например https://ogarniemy.pro/assets/banner.jpg": "Link do obrazu, np. https://ogarniemy.pro/assets/banner.jpg",
         "Ссылка на картинку": "Link do obrazu",
+        "Картинка с компьютера": "Obraz z komputera",
+        "Загрузить картинку с компьютера": "Prześlij obraz z komputera",
+        "Картинка загружена.": "Obraz został przesłany.",
+        "Не удалось загрузить картинку.": "Nie udało się przesłać obrazu.",
         "Сохранить рекламный материал": "Zapisz materiał reklamowy",
         "Расписание": "Harmonogram",
         "Расписание подготовки": "Harmonogram przygotowania",
+        "Расписание отправки": "Harmonogram wysyłki",
+        "Время отправки": "Godzina wysyłki",
+        "Рекламный материал": "Materiał reklamowy",
         "Расписание включено: отправлять каждый день в это время": "Harmonogram włączony: wysyłaj codziennie o tej godzinie",
         "Расписание включено: готовить материал каждый день в это время": "Harmonogram włączony: przygotuj materiał codziennie o tej godzinie",
         "Сохранить время": "Zapisz czas",
@@ -6562,12 +6637,15 @@ MARKETING_PAGE_SCRIPT = r"""
         "Facebook отправка подготовлена.": "Wysyłka Facebook została przygotowana.",
         "Facebook лучше использовать как входящий канал: реклама ведет в Messenger или на сайт, бот отвечает тем, кто сам написал. Массовые ежедневные личные сообщения незнакомым людям Facebook ограничивает.": "Facebook najlepiej działa jako kanał przychodzący: reklama prowadzi do Messengera albo na stronę, a bot odpowiada osobom, które same napisały. Facebook ogranicza masowe codzienne wiadomości prywatne do nieznajomych.",
         "Facebook-цели": "Cele Facebook",
+        "Facebook группы": "Grupy Facebook",
+        "Добавить Facebook в группу": "Dodaj grupę Facebook",
         "Страница / кампания / группа": "Strona / kampania / grupa",
+        "Страница / группа / ссылка": "Strona / grupa / link",
         "ID или ссылка": "ID lub link",
         "Заметки: аудитория, бюджет, что проверить": "Notatki: grupa odbiorców, budżet, co sprawdzić",
-        "Цель включена: можно использовать в планировании Facebook": "Cel włączony: można go używać w planowaniu Facebook",
-        "Сохранить цель": "Zapisz cel",
-        "Цели пока не добавлены.": "Nie dodano jeszcze celów."
+        "Группа включена: можно использовать в планировании Facebook": "Grupa włączona: można jej używać w planowaniu Facebook",
+        "Сохранить группу": "Zapisz grupę",
+        "Группы пока не добавлены.": "Nie dodano jeszcze grup."
       }
     };
     const marketingLocales = { en: "en-US", uk: "uk-UA", ru: "ru-RU", pl: "pl-PL" };
@@ -6649,6 +6727,31 @@ MARKETING_PAGE_SCRIPT = r"""
       if (!res.ok) throw new Error(payload.error || res.status);
       return payload;
     }
+    function readFileAsDataUrl(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+    }
+    async function uploadSelectedImage() {
+      const input = document.getElementById("messageImageFile");
+      const status = document.getElementById("messageImageStatus");
+      if (!input || !input.files || !input.files[0]) return messageImageUrl.value;
+      const file = input.files[0];
+      if (status) status.textContent = mt("Загрузить картинку с компьютера") + "...";
+      const content = await readFileAsDataUrl(file);
+      const result = await api("upload-image", {
+        name: file.name,
+        contentType: file.type,
+        content
+      });
+      messageImageUrl.value = result.url || "";
+      input.value = "";
+      if (status) status.textContent = mt("Картинка загружена.");
+      return messageImageUrl.value;
+    }
     async function loadState() {
       const res = await fetch(`/api/admin/marketing/${platform}`, { headers: adminHeaders() });
       state = await res.json();
@@ -6669,6 +6772,12 @@ MARKETING_PAGE_SCRIPT = r"""
     }
     async function saveMessage(event) {
       event.preventDefault();
+      try {
+        await uploadSelectedImage();
+      } catch (error) {
+        alert(mt("Не удалось загрузить картинку."));
+        return;
+      }
       await api("message", {
         id: messageId.value || null,
         title: messageTitle.value,
@@ -6681,6 +6790,8 @@ MARKETING_PAGE_SCRIPT = r"""
       messageTitle.value = "";
       messageBody.value = "";
       messageImageUrl.value = "";
+      if (document.getElementById("messageImageFile")) document.getElementById("messageImageFile").value = "";
+      if (document.getElementById("messageImageStatus")) document.getElementById("messageImageStatus").textContent = "";
       messageEnabled.checked = true;
       loadState();
     }
@@ -6743,10 +6854,10 @@ TELEGRAM_ADS_HTML = r"""<!doctype html>
   <main>
     <section class="grid">
       <div class="panel"><h2>Города</h2><form onsubmit="saveCity(event)"><input id="cityName" placeholder="Warszawa" required><button>Добавить город</button></form><div id="cities" class="cards"></div></div>
-      <div class="panel"><h2>Добавить Telegram-чат</h2><form id="groupForm"><input id="groupTitle" placeholder="Название группы" required><input id="groupChatId" placeholder="Chat ID, например -100..." required><select id="groupCity"></select><textarea id="groupKeywords" placeholder="мастер, сантехник, электрик, ремонт"></textarea><label><input id="groupEnabled" type="checkbox" checked> Чат включен: бот может отправлять рекламу в этот чат</label><button>Сохранить чат</button></form></div>
-      <div class="panel full"><h2>Рекламный текст и картинка</h2><form onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><div class="row"><input id="messageTitle" placeholder="Название текста" required><select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select><label><input id="messageEnabled" type="checkbox" checked> Материал включен: можно отправлять и ставить в расписание</label></div><textarea id="messageBody" placeholder="Текст рекламы" required></textarea><input id="messageImageUrl" placeholder="Ссылка на картинку, например https://ogarniemy.pro/assets/banner.jpg"><button>Сохранить рекламный материал</button></form></div>
-      <div class="panel"><h2>Расписание</h2><form onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><select id="scheduleCity"></select><input id="scheduleTime" type="time" value="09:30" required><select id="scheduleMessage"></select><label><input id="scheduleEnabled" type="checkbox" checked> Расписание включено: отправлять каждый день в это время</label><button>Сохранить время</button></form></div>
-      <div class="panel"><h2>Отправить сейчас</h2><select id="sendCity"></select><select id="sendMessage"></select><button class="success" onclick="sendNow()">Отправить сейчас</button></div>
+      <div class="panel"><h2>Добавить Telegram-чат</h2><form id="groupForm"><input id="groupTitle" placeholder="Название группы" required><input id="groupChatId" placeholder="Chat ID, например -100..." required><select id="groupCity"></select><label class="field">Ключевые слова<textarea id="groupKeywords" placeholder="мастер, сантехник, электрик, ремонт"></textarea></label><label><input id="groupEnabled" type="checkbox" checked> Чат включен: бот может отправлять рекламу в этот чат</label><button>Сохранить чат</button></form></div>
+      <div class="panel full"><h2>Рекламный текст и картинка</h2><form onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><div class="row"><input id="messageTitle" placeholder="Название текста" required><select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select><label><input id="messageEnabled" type="checkbox" checked> Материал включен: можно отправлять и ставить в расписание</label></div><label class="field">Текст рекламы<textarea id="messageBody" placeholder="Текст рекламы" required></textarea></label><div class="upload-row"><label class="field">Ссылка на картинку<input id="messageImageUrl" placeholder="Ссылка на картинку, например https://ogarniemy.pro/assets/banner.jpg"></label><label class="field">Картинка с компьютера<input id="messageImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label></div><p id="messageImageStatus" class="meta upload-status"></p><button>Сохранить рекламный материал</button></form></div>
+      <div class="panel"><h2>Расписание</h2><form onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><label class="field">Город<select id="scheduleCity"></select></label><label class="field">Время отправки<input id="scheduleTime" type="time" value="09:30" required></label><label class="field">Рекламный материал<select id="scheduleMessage"></select></label><label><input id="scheduleEnabled" type="checkbox" checked> Расписание включено: отправлять каждый день в это время</label><button>Сохранить время</button></form></div>
+      <div class="panel"><h2>Отправить сейчас</h2><label class="field">Город<select id="sendCity"></select></label><label class="field">Рекламный материал<select id="sendMessage"></select></label><button class="success" onclick="sendNow()">Отправить сейчас</button></div>
       <div class="panel full"><h2>Что уже добавлено</h2><div id="summary" class="cards"></div></div>
       <div class="panel full"><h2>Журнал</h2><div id="logs" class="cards"></div></div>
     </section>
@@ -6796,10 +6907,10 @@ FACEBOOK_ADS_HTML = r"""<!doctype html>
     <div class="note">Facebook лучше использовать как входящий канал: реклама ведет в Messenger или на сайт, бот отвечает тем, кто сам написал. Массовые ежедневные личные сообщения незнакомым людям Facebook ограничивает.</div>
     <section class="grid">
       <div class="panel"><h2>Города</h2><form onsubmit="saveCity(event)"><input id="cityName" placeholder="Warszawa" required><button>Добавить город</button></form><div id="cities" class="cards"></div></div>
-      <div class="panel"><h2>Facebook-цели</h2><form id="targetForm"><input id="targetName" placeholder="Страница / кампания / группа" required><input id="targetId" placeholder="ID или ссылка"><select id="targetCity"></select><textarea id="targetNotes" placeholder="Заметки: аудитория, бюджет, что проверить"></textarea><label><input id="targetEnabled" type="checkbox" checked> Цель включена: можно использовать в планировании Facebook</label><button>Сохранить цель</button></form></div>
-      <div class="panel full"><h2>Рекламный текст и картинка</h2><form onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><div class="row"><input id="messageTitle" placeholder="Название текста" required><select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select><label><input id="messageEnabled" type="checkbox" checked> Материал включен: можно отправлять и ставить в расписание</label></div><textarea id="messageBody" placeholder="Текст рекламы / Messenger-ответ" required></textarea><input id="messageImageUrl" placeholder="Ссылка на картинку"><button>Сохранить рекламный материал</button></form></div>
-      <div class="panel"><h2>Расписание подготовки</h2><form onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><select id="scheduleCity"></select><input id="scheduleTime" type="time" value="10:00" required><select id="scheduleMessage"></select><label><input id="scheduleEnabled" type="checkbox" checked> Расписание включено: готовить материал каждый день в это время</label><button>Сохранить время</button></form></div>
-      <div class="panel"><h2>Подготовить сейчас</h2><select id="sendCity"></select><select id="sendMessage"></select><button class="success" onclick="sendNow()">Подготовить сейчас</button></div>
+      <div class="panel"><h2>Добавить Facebook в группу</h2><form id="targetForm"><input id="targetName" placeholder="Страница / группа / ссылка" required><input id="targetId" placeholder="ID или ссылка"><select id="targetCity"></select><textarea id="targetNotes" placeholder="Заметки: аудитория, бюджет, что проверить"></textarea><label><input id="targetEnabled" type="checkbox" checked> Группа включена: можно использовать в планировании Facebook</label><button>Сохранить группу</button></form></div>
+      <div class="panel full"><h2>Рекламный текст и картинка</h2><form onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><div class="row"><input id="messageTitle" placeholder="Название текста" required><select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select><label><input id="messageEnabled" type="checkbox" checked> Материал включен: можно отправлять и ставить в расписание</label></div><label class="field">Текст рекламы<textarea id="messageBody" placeholder="Текст рекламы / Messenger-ответ" required></textarea></label><div class="upload-row"><label class="field">Ссылка на картинку<input id="messageImageUrl" placeholder="Ссылка на картинку"></label><label class="field">Картинка с компьютера<input id="messageImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label></div><p id="messageImageStatus" class="meta upload-status"></p><button>Сохранить рекламный материал</button></form></div>
+      <div class="panel"><h2>Расписание отправки</h2><form onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><label class="field">Город<select id="scheduleCity"></select></label><label class="field">Время отправки<input id="scheduleTime" type="time" value="10:00" required></label><label class="field">Рекламный материал<select id="scheduleMessage"></select></label><label><input id="scheduleEnabled" type="checkbox" checked> Расписание включено: отправлять каждый день в это время</label><button>Сохранить время</button></form></div>
+      <div class="panel"><h2>Отправить сейчас</h2><label class="field">Город<select id="sendCity"></select></label><label class="field">Рекламный материал<select id="sendMessage"></select></label><button class="success" onclick="sendNow()">Отправить сейчас</button></div>
       <div class="panel full"><h2>Что уже добавлено</h2><div id="summary" class="cards"></div></div>
       <div class="panel full"><h2>Журнал</h2><div id="logs" class="cards"></div></div>
     </section>
@@ -6818,7 +6929,7 @@ FACEBOOK_ADS_HTML = r"""<!doctype html>
       [scheduleMessage, sendMessage].forEach(select => select.innerHTML = messageOptions(select.value));
       cities.innerHTML = (state.cities || []).map(city => `<span class="pill">${escapeHtml(city.name)}</span>`).join("") || "<p class='meta'>Города пока не добавлены.</p>";
       summary.innerHTML = `
-        <h3>Facebook-цели</h3>${(state.targets || []).map(target => `<article class="item ${target.enabled ? "" : "off"}"><strong>${escapeHtml(target.name)}</strong><p class="meta">${escapeHtml(target.city)} · ${escapeHtml(target.target_id || "")}</p><p>${escapeHtml(target.notes || "")}</p></article>`).join("") || "<p class='meta'>Цели пока не добавлены.</p>"}
+        <h3>Facebook группы</h3>${(state.targets || []).map(target => `<article class="item ${target.enabled ? "" : "off"}"><strong>${escapeHtml(target.name)}</strong><p class="meta">${escapeHtml(target.city)} · ${escapeHtml(target.target_id || "")}</p><p>${escapeHtml(target.notes || "")}</p></article>`).join("") || "<p class='meta'>Группы пока не добавлены.</p>"}
         <h3>Рекламные материалы</h3>${(state.messages || []).map(message => `<article class="item ${message.enabled ? "" : "off"}"><strong>#${message.id} ${escapeHtml(message.title)}</strong><p>${escapeHtml(message.body)}</p>${message.image_url ? `<img class="preview" src="${escapeHtml(message.image_url)}">` : ""}<button class="secondary" onclick="editMessage(${message.id})">Редактировать</button></article>`).join("") || "<p class='meta'>Материалы пока не добавлены.</p>"}
         <h3>Расписание</h3>${(state.schedules || []).map(item => `<article class="item ${item.enabled ? "" : "off"}"><strong>${escapeHtml(item.send_time)}</strong><p class="meta">${escapeHtml(item.city || "Все города")} · текст #${item.message_id} · последняя подготовка: ${escapeHtml(item.last_sent_date || "нет")}</p><button class="secondary" onclick="editSchedule(${item.id})">Редактировать</button></article>`).join("") || "<p class='meta'>Расписание пока не добавлено.</p>"}
       `;
