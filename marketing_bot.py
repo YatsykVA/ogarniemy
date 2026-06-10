@@ -112,6 +112,60 @@ def init_db() -> None:
               created_at integer not null,
               stopped_at integer
             );
+
+            create table if not exists marketing_cities (
+              id integer primary key autoincrement,
+              platform text not null,
+              name text not null,
+              enabled integer default 1,
+              created_at integer not null,
+              unique(platform, name)
+            );
+
+            create table if not exists marketing_messages (
+              id integer primary key autoincrement,
+              platform text not null,
+              title text not null,
+              audience text default 'all',
+              body text not null,
+              image_url text default '',
+              enabled integer default 1,
+              created_at integer not null,
+              updated_at integer not null
+            );
+
+            create table if not exists marketing_schedules (
+              id integer primary key autoincrement,
+              platform text not null,
+              city text default '',
+              send_time text not null,
+              message_id integer,
+              enabled integer default 1,
+              last_sent_date text default '',
+              created_at integer not null
+            );
+
+            create table if not exists marketing_logs (
+              id integer primary key autoincrement,
+              platform text not null,
+              target_type text not null,
+              target_id text default '',
+              city text default '',
+              action text not null,
+              status text not null,
+              detail text default '',
+              created_at integer not null
+            );
+
+            create table if not exists facebook_targets (
+              id integer primary key autoincrement,
+              name text not null,
+              city text default '',
+              target_id text default '',
+              notes text default '',
+              enabled integer default 1,
+              created_at integer not null
+            );
             """
         )
 
@@ -148,6 +202,34 @@ def send_telegram(chat_id: int, text: str) -> bool:
     except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
         print(f"telegram send failed for {chat_id}: {exc}")
         return False
+
+
+def send_telegram_ad(chat_id: int, text: str, image_url: str = "") -> bool:
+    if image_url:
+        try:
+            telegram_api(
+                "sendPhoto",
+                {
+                    "chat_id": chat_id,
+                    "photo": image_url,
+                    "caption": text[:1024],
+                },
+            )
+            return True
+        except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
+            print(f"telegram photo failed for {chat_id}: {exc}")
+    return send_telegram(chat_id, text)
+
+
+def log_marketing(platform: str, target_type: str, target_id: str, city: str, action: str, status: str, detail: str = "") -> None:
+    with db() as conn:
+        conn.execute(
+            """
+            insert into marketing_logs(platform, target_type, target_id, city, action, status, detail, created_at)
+            values(?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (platform, target_type, str(target_id), city, action, status, detail[:1000], int(time.time())),
+        )
 
 
 def is_admin(user_id: int | None) -> bool:
@@ -290,13 +372,80 @@ def broadcast_subscribers(role: str, text: str) -> tuple[int, int]:
     return sent, len(rows)
 
 
-def post_to_groups(text: str) -> tuple[int, int]:
+def post_to_groups(text: str, image_url: str = "", city: str = "") -> tuple[int, int]:
     with db() as conn:
-        rows = conn.execute(
-            "select chat_id from telegram_groups where enabled = 1"
-        ).fetchall()
-    sent = sum(1 for row in rows if send_telegram(int(row["chat_id"]), text))
+        if city:
+            rows = conn.execute(
+                "select chat_id, title, city from telegram_groups where enabled = 1 and lower(city) = lower(?)",
+                (city,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "select chat_id, title, city from telegram_groups where enabled = 1"
+            ).fetchall()
+    sent = 0
+    for row in rows:
+        ok = send_telegram_ad(int(row["chat_id"]), text, image_url)
+        if ok:
+            sent += 1
+        log_marketing("telegram", "group", row["chat_id"], row["city"] or city, "post", "sent" if ok else "failed", row["title"] or "")
     return sent, len(rows)
+
+
+def due_schedules(platform: str = "telegram") -> list[sqlite3.Row]:
+    now = time.localtime()
+    current_time = time.strftime("%H:%M", now)
+    today = time.strftime("%Y-%m-%d", now)
+    with db() as conn:
+        return conn.execute(
+            """
+            select schedules.*, messages.body, messages.image_url, messages.title
+            from marketing_schedules schedules
+            join marketing_messages messages on messages.id = schedules.message_id
+            where schedules.platform = ?
+              and schedules.enabled = 1
+              and messages.enabled = 1
+              and schedules.send_time <= ?
+              and coalesce(schedules.last_sent_date, '') != ?
+            order by schedules.send_time, schedules.id
+            """,
+            (platform, current_time, today),
+        ).fetchall()
+
+
+def run_due_schedules() -> None:
+    today = time.strftime("%Y-%m-%d", time.localtime())
+    for schedule in due_schedules("telegram"):
+        sent, total = post_to_groups(schedule["body"], schedule["image_url"] or "", schedule["city"] or "")
+        with db() as conn:
+            conn.execute(
+                "update marketing_schedules set last_sent_date = ? where id = ?",
+                (today, schedule["id"]),
+            )
+        log_marketing(
+            "telegram",
+            "schedule",
+            schedule["id"],
+            schedule["city"] or "",
+            "scheduled_post",
+            "sent" if sent else "failed",
+            f"{schedule['title']}: {sent}/{total}",
+        )
+    for schedule in due_schedules("facebook"):
+        with db() as conn:
+            conn.execute(
+                "update marketing_schedules set last_sent_date = ? where id = ?",
+                (today, schedule["id"]),
+            )
+        log_marketing(
+            "facebook",
+            "schedule",
+            schedule["id"],
+            schedule["city"] or "",
+            "scheduled_prepare",
+            "prepared",
+            f"{schedule['title']}: материал готов к публикации/рекламе",
+        )
 
 
 def stats_text() -> str:
@@ -443,9 +592,13 @@ def handle_telegram_update(update: dict[str, Any]) -> None:
 def run_telegram_polling() -> None:
     init_db()
     offset = 0
+    last_schedule_check = 0
     print("Telegram marketing bot started.")
     while True:
         try:
+            if time.time() - last_schedule_check > 30:
+                run_due_schedules()
+                last_schedule_check = time.time()
             data = telegram_api(
                 "getUpdates",
                 {"timeout": 30, "offset": offset, "allowed_updates": ["message", "edited_message"]},

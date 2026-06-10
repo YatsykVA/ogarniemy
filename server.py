@@ -670,6 +670,12 @@ class App(BaseHTTPRequestHandler):
         if path == "/settings":
             self.send_html(SETTINGS_HTML)
             return
+        if path == "/telegram-ads":
+            self.send_html(TELEGRAM_ADS_HTML)
+            return
+        if path == "/facebook-ads":
+            self.send_html(FACEBOOK_ADS_HTML)
+            return
         if path == "/api/tasks":
             self.handle_tasks()
             return
@@ -712,6 +718,12 @@ class App(BaseHTTPRequestHandler):
         if path == "/api/admin/settings":
             self.handle_admin_settings()
             return
+        if path == "/api/admin/marketing/telegram":
+            self.handle_marketing_state("telegram")
+            return
+        if path == "/api/admin/marketing/facebook":
+            self.handle_marketing_state("facebook")
+            return
         if path.startswith("/api/admin/users/") and path.endswith("/report"):
             self.handle_user_report(path)
             return
@@ -745,6 +757,9 @@ class App(BaseHTTPRequestHandler):
             return
         if path == "/api/admin/settings":
             self.handle_save_admin_settings()
+            return
+        if path.startswith("/api/admin/marketing/"):
+            self.handle_marketing_post(path)
             return
         if path == "/api/me/reserve":
             self.handle_my_reserve()
@@ -3335,6 +3350,166 @@ class App(BaseHTTPRequestHandler):
         conn.close()
         self.send_json({"ok": True, "deleted": settlement_id})
 
+    def marketing(self):
+        import marketing_bot
+
+        marketing_bot.init_db()
+        return marketing_bot
+
+    def handle_marketing_state(self, platform):
+        if not self.is_admin():
+            self.send_json({"error": "admin_unauthorized"}, 401)
+            return
+        marketing = self.marketing()
+        conn = marketing.db()
+        cities = [dict(row) for row in conn.execute(
+            "select id, name, enabled from marketing_cities where platform = ? order by name",
+            (platform,),
+        ).fetchall()]
+        messages = [dict(row) for row in conn.execute(
+            "select id, title, audience, body, image_url, enabled, updated_at from marketing_messages where platform = ? order by id desc",
+            (platform,),
+        ).fetchall()]
+        schedules = [dict(row) for row in conn.execute(
+            "select id, city, send_time, message_id, enabled, last_sent_date from marketing_schedules where platform = ? order by send_time, city",
+            (platform,),
+        ).fetchall()]
+        logs = [dict(row) for row in conn.execute(
+            "select platform, target_type, target_id, city, action, status, detail, created_at from marketing_logs where platform = ? order by id desc limit 60",
+            (platform,),
+        ).fetchall()]
+        if platform == "telegram":
+            groups = [dict(row) for row in conn.execute(
+                "select chat_id, title, city, keywords, enabled, created_at from telegram_groups order by city, title"
+            ).fetchall()]
+            subscribers = [dict(row) for row in conn.execute(
+                "select role, city, count(*) count from telegram_subscribers where stopped_at is null group by role, city order by role, city"
+            ).fetchall()]
+            hits = [dict(row) for row in conn.execute(
+                "select keyword, group_chat_id, username, message, created_at from keyword_hits order by id desc limit 40"
+            ).fetchall()]
+            conn.close()
+            self.send_json({"cities": cities, "groups": groups, "subscribers": subscribers, "messages": messages, "schedules": schedules, "logs": logs, "hits": hits})
+            return
+        targets = [dict(row) for row in conn.execute(
+            "select id, name, city, target_id, notes, enabled, created_at from facebook_targets order by city, name"
+        ).fetchall()]
+        subscribers = [dict(row) for row in conn.execute(
+            "select role, city, count(*) count from facebook_subscribers where stopped_at is null group by role, city order by role, city"
+        ).fetchall()]
+        conn.close()
+        self.send_json({"cities": cities, "targets": targets, "subscribers": subscribers, "messages": messages, "schedules": schedules, "logs": logs})
+
+    def handle_marketing_post(self, path):
+        if not self.is_admin():
+            self.send_json({"error": "admin_unauthorized"}, 401)
+            return
+        parts = path.strip("/").split("/")
+        if len(parts) < 5:
+            self.send_json({"error": "not_found"}, 404)
+            return
+        platform = parts[3]
+        action = parts[4]
+        if platform not in {"telegram", "facebook"}:
+            self.send_json({"error": "bad_platform"}, 400)
+            return
+        data = self.read_json()
+        marketing = self.marketing()
+        conn = marketing.db()
+        now = int(time.time())
+        try:
+            if action == "city":
+                name = str(data.get("name", "")).strip()
+                if not name:
+                    self.send_json({"error": "city_required"}, 400)
+                    return
+                conn.execute(
+                    "insert into marketing_cities(platform, name, enabled, created_at) values(?, ?, ?, ?) on conflict(platform, name) do update set enabled = excluded.enabled",
+                    (platform, name, 1 if data.get("enabled", True) else 0, now),
+                )
+            elif action == "telegram-group" and platform == "telegram":
+                chat_id = int(str(data.get("chatId", "")).strip())
+                conn.execute(
+                    """
+                    insert into telegram_groups(chat_id, title, city, keywords, enabled, created_at)
+                    values(?, ?, ?, ?, ?, ?)
+                    on conflict(chat_id) do update set title = excluded.title, city = excluded.city, keywords = excluded.keywords, enabled = excluded.enabled
+                    """,
+                    (chat_id, str(data.get("title", "")).strip(), str(data.get("city", "")).strip(), str(data.get("keywords", "")).strip(), 1 if data.get("enabled", True) else 0, now),
+                )
+            elif action == "facebook-target" and platform == "facebook":
+                target_id = data.get("id")
+                if target_id:
+                    conn.execute(
+                        "update facebook_targets set name = ?, city = ?, target_id = ?, notes = ?, enabled = ? where id = ?",
+                        (str(data.get("name", "")).strip(), str(data.get("city", "")).strip(), str(data.get("targetId", "")).strip(), str(data.get("notes", "")).strip(), 1 if data.get("enabled", True) else 0, int(target_id)),
+                    )
+                else:
+                    conn.execute(
+                        "insert into facebook_targets(name, city, target_id, notes, enabled, created_at) values(?, ?, ?, ?, ?, ?)",
+                        (str(data.get("name", "")).strip(), str(data.get("city", "")).strip(), str(data.get("targetId", "")).strip(), str(data.get("notes", "")).strip(), 1 if data.get("enabled", True) else 0, now),
+                    )
+            elif action == "message":
+                message_id = data.get("id")
+                values = (platform, str(data.get("title", "")).strip() or "Реклама", str(data.get("audience", "all")).strip() or "all", str(data.get("body", "")).strip(), str(data.get("imageUrl", "")).strip(), 1 if data.get("enabled", True) else 0, now)
+                if not values[3]:
+                    self.send_json({"error": "body_required"}, 400)
+                    return
+                if message_id:
+                    conn.execute(
+                        "update marketing_messages set title = ?, audience = ?, body = ?, image_url = ?, enabled = ?, updated_at = ? where id = ? and platform = ?",
+                        (values[1], values[2], values[3], values[4], values[5], now, int(message_id), platform),
+                    )
+                else:
+                    conn.execute(
+                        "insert into marketing_messages(platform, title, audience, body, image_url, enabled, created_at, updated_at) values(?, ?, ?, ?, ?, ?, ?, ?)",
+                        values + (now,),
+                    )
+            elif action == "schedule":
+                schedule_id = data.get("id")
+                city = str(data.get("city", "")).strip()
+                send_time = str(data.get("sendTime", "")).strip()
+                message_id = int(data.get("messageId") or 0)
+                if len(send_time) != 5 or ":" not in send_time or not message_id:
+                    self.send_json({"error": "bad_schedule"}, 400)
+                    return
+                if schedule_id:
+                    conn.execute(
+                        "update marketing_schedules set city = ?, send_time = ?, message_id = ?, enabled = ? where id = ? and platform = ?",
+                        (city, send_time, message_id, 1 if data.get("enabled", True) else 0, int(schedule_id), platform),
+                    )
+                else:
+                    conn.execute(
+                        "insert into marketing_schedules(platform, city, send_time, message_id, enabled, created_at) values(?, ?, ?, ?, ?, ?)",
+                        (platform, city, send_time, message_id, 1 if data.get("enabled", True) else 0, now),
+                    )
+            elif action == "send-now":
+                message_id = int(data.get("messageId") or 0)
+                city = str(data.get("city", "")).strip()
+                message = conn.execute("select body, image_url from marketing_messages where id = ? and platform = ?", (message_id, platform)).fetchone()
+                if not message:
+                    self.send_json({"error": "message_not_found"}, 404)
+                    return
+                conn.commit()
+                conn.close()
+                if platform == "telegram":
+                    sent, total = marketing.post_to_groups(message["body"], message["image_url"] or "", city)
+                    self.send_json({"ok": True, "sent": sent, "total": total})
+                    return
+                marketing.log_marketing("facebook", "manual", "", city, "send_now", "prepared", "Facebook отправка требует подключенного Page Access Token и входящих подписчиков.")
+                self.send_json({"ok": True, "prepared": True})
+                return
+            else:
+                self.send_json({"error": "bad_action"}, 400)
+                return
+            conn.commit()
+        except (ValueError, TypeError):
+            conn.close()
+            self.send_json({"error": "bad_value"}, 400)
+            return
+        conn.close()
+        self.send_json({"ok": True})
+
 
 def row_value(row, key, default=""):
     try:
@@ -4122,7 +4297,7 @@ INDEX_HTML = r"""<!doctype html>
     .editTask button { height: 88px; margin: 0; }
     .editTaskActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; grid-column: 5 / span 2; }
     .editTask .clientSourceSelect { height: 88px; }
-    nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
+    nav { display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1320px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     .language-corner { position: absolute; top: 18px; right: 20px; }
     .language-corner select { font: inherit; padding: 8px 10px; border-radius: 8px; border: 0; background: white; color: var(--ink); font-weight: 700; }
@@ -4148,7 +4323,7 @@ INDEX_HTML = r"""<!doctype html>
       </select>
     </div>
     <h1 data-i18n="serverTitle">Задания</h1>
-    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <form id="form">
@@ -4614,7 +4789,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
     body.locked header, body.locked main { display: none; }
     header { background: linear-gradient(135deg, #0f766e 0%, #2563eb 48%, #7c3aed 100%); color: white; padding: 24px 28px; }
     main { max-width: 980px; margin: 0 auto; padding: 24px; }
-    nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
+    nav { display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1320px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     button { font: inherit; padding: 11px 13px; border-radius: 8px; border: 0; background: linear-gradient(135deg, var(--teal), #2563eb); color: white; cursor: pointer; font-weight: 700; }
     .item { background: #fee2e2; border-left: 6px solid #ef4444; border-radius: 8px; padding: 16px; margin: 12px 0; box-shadow: 0 14px 34px rgba(23,32,38,.1); }
@@ -4644,7 +4819,7 @@ CALCULATIONS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Расчеты сотрудников</h1>
-    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <section id="settlements"></section>
@@ -4914,7 +5089,7 @@ USERS_HTML = r"""<!doctype html>
     details.settlement { margin-top: 12px; padding: 12px; background: white; border-radius: 8px; border: 1px solid #eef2f4; }
     details.settlement summary { cursor: pointer; font-weight: 700; }
     .meta { color: #60717d; font-size: 14px; }
-    nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
+    nav { display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1320px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     .language-corner { position: absolute; top: 18px; right: 20px; }
     .language-corner select { font: inherit; padding: 8px 10px; border-radius: 8px; border: 0; background: white; color: var(--ink); font-weight: 700; }
@@ -4933,7 +5108,7 @@ USERS_HTML = r"""<!doctype html>
       </select>
     </div>
     <h1 data-i18n="employees">Сотрудники</h1>
-    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <button class="secondary" type="button" onclick="refreshUsersList()" data-i18n="refreshList">Обновить список</button>
@@ -5453,7 +5628,7 @@ CLIENTS_HTML = r"""<!doctype html>
     .reportTask.new { border-left-color: #60a5fa; }
     .reportTask.other { border-left-color: #94a3b8; }
     .meta { color: #60717d; font-size: 14px; }
-    nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
+    nav { display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1320px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     @media (max-width: 980px) { nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (max-width: 760px) { form, .editForm, .reportStats { grid-template-columns: 1fr; } .clientHeader { display: block; } .actions { justify-content: flex-start; margin-top: 10px; } }
@@ -5462,7 +5637,7 @@ CLIENTS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Клиенты</h1>
-    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <button class="secondary" type="button" onclick="refreshClientsList()">Обновить список</button>
@@ -5930,7 +6105,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
     body.locked header, body.locked main { display: none; }
     header { background: linear-gradient(135deg, #0f766e 0%, #2563eb 48%, #7c3aed 100%); color: white; padding: 24px 28px; }
     main { max-width: 980px; margin: 0 auto; padding: 24px; }
-    nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
+    nav { display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1320px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     button { font: inherit; padding: 11px 13px; border-radius: 8px; border: 0; background: linear-gradient(135deg, var(--teal), #2563eb); color: white; cursor: pointer; font-weight: 700; }
     .item { background: #fee2e2; border-left: 6px solid #ef4444; border-radius: 8px; padding: 16px; margin: 12px 0; box-shadow: 0 14px 34px rgba(23,32,38,.1); }
@@ -5953,7 +6128,7 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Расчеты клиентов</h1>
-    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <section id="items"></section>
@@ -6183,6 +6358,255 @@ CLIENT_CALCULATIONS_HTML = r"""<!doctype html>
 </html>"""
 
 
+MARKETING_PAGE_STYLE = r"""
+    :root { --ink: #172026; --teal: #0f766e; --gold: #f6c85f; --paper: #fffaf0; --muted: #60717d; }
+    body { font-family: Arial, sans-serif; margin: 0; color: var(--ink); background: linear-gradient(135deg, #fff7df 0%, #d8f8eb 48%, #e9d5ff 100%); min-height: 100vh; }
+    body.locked header, body.locked main { display: none; }
+    header { background: linear-gradient(135deg, #0f766e 0%, #2563eb 48%, #7c3aed 100%); color: white; padding: 24px 28px; }
+    main { max-width: 1220px; margin: 0 auto; padding: 24px; }
+    nav { display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1320px; }
+    nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
+    section { margin: 18px 0; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    .panel { background: rgba(255,255,255,.82); border: 1px solid rgba(23,32,38,.12); border-radius: 8px; padding: 16px; box-shadow: 0 14px 34px rgba(23,32,38,.08); }
+    .full { grid-column: 1 / -1; }
+    h2, h3 { margin-top: 0; }
+    form { display: grid; gap: 10px; }
+    .row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    input, textarea, select { width: 100%; box-sizing: border-box; font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(23,32,38,.18); background: white; }
+    textarea { min-height: 120px; resize: vertical; }
+    button { font: inherit; padding: 11px 13px; border-radius: 8px; border: 0; background: linear-gradient(135deg, var(--teal), #2563eb); color: white; cursor: pointer; font-weight: 700; }
+    button.secondary { background: #475569; }
+    button.success { background: #16a34a; }
+    .cards { display: grid; gap: 10px; }
+    .item { background: white; border-left: 5px solid var(--teal); border-radius: 8px; padding: 12px; }
+    .item.off { opacity: .62; border-left-color: #94a3b8; }
+    .meta { color: var(--muted); font-size: 14px; }
+    .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 4px 9px; background: #e0f2fe; margin: 3px 4px 3px 0; font-size: 13px; font-weight: 700; }
+    .preview { max-width: 220px; border-radius: 8px; border: 1px solid rgba(23,32,38,.12); margin-top: 8px; display: block; }
+    .note { background: rgba(15,118,110,.1); border-left: 5px solid var(--teal); padding: 12px; border-radius: 8px; }
+    @media (max-width: 980px) { nav, .grid, .row { grid-template-columns: 1fr; } .full { grid-column: auto; } }
+"""
+
+
+MARKETING_PAGE_SCRIPT = r"""
+    let adminPassword = sessionStorage.getItem("adminPassword") || "";
+    let state = {};
+    function adminHeaders(extra = {}) {
+      if (!adminPassword) {
+        adminPassword = prompt("Admin password") || "";
+        sessionStorage.setItem("adminPassword", adminPassword);
+      }
+      return { "X-Admin-Password": adminPassword, ...extra };
+    }
+    async function requireAdminAccess(start) {
+      while (true) {
+        if (!adminPassword) adminPassword = prompt("Admin password") || "";
+        if (!adminPassword) { document.body.innerHTML = ""; return; }
+        sessionStorage.setItem("adminPassword", adminPassword);
+        const res = await fetch("/api/admin/check-password", { headers: { "X-Admin-Password": adminPassword } });
+        if (res.ok) { document.body.classList.remove("locked"); start(); return; }
+        sessionStorage.removeItem("adminPassword");
+        adminPassword = "";
+      }
+    }
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    }
+    function formatDate(value) {
+      return value ? new Date(Number(value) * 1000).toLocaleString("ru-RU") : "";
+    }
+    async function api(action, data = {}) {
+      const res = await fetch(`/api/admin/marketing/${platform}/${action}`, {
+        method: "POST",
+        headers: adminHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(data)
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || res.status);
+      return payload;
+    }
+    async function loadState() {
+      const res = await fetch(`/api/admin/marketing/${platform}`, { headers: adminHeaders() });
+      state = await res.json();
+      render();
+    }
+    function cityOptions(selected = "") {
+      return `<option value="">Все города</option>` + (state.cities || []).map(city => `<option value="${escapeHtml(city.name)}" ${city.name === selected ? "selected" : ""}>${escapeHtml(city.name)}</option>`).join("");
+    }
+    function messageOptions(selected = "") {
+      return (state.messages || []).map(message => `<option value="${message.id}" ${String(message.id) === String(selected) ? "selected" : ""}>#${message.id} ${escapeHtml(message.title)}</option>`).join("");
+    }
+    async function saveCity(event) {
+      event.preventDefault();
+      await api("city", { name: cityName.value, enabled: true });
+      cityName.value = "";
+      loadState();
+    }
+    async function saveMessage(event) {
+      event.preventDefault();
+      await api("message", {
+        id: messageId.value || null,
+        title: messageTitle.value,
+        audience: messageAudience.value,
+        body: messageBody.value,
+        imageUrl: messageImageUrl.value,
+        enabled: messageEnabled.checked
+      });
+      messageId.value = "";
+      messageTitle.value = "";
+      messageBody.value = "";
+      messageImageUrl.value = "";
+      messageEnabled.checked = true;
+      loadState();
+    }
+    async function saveSchedule(event) {
+      event.preventDefault();
+      await api("schedule", {
+        id: scheduleId.value || null,
+        city: scheduleCity.value,
+        sendTime: scheduleTime.value,
+        messageId: scheduleMessage.value,
+        enabled: scheduleEnabled.checked
+      });
+      scheduleId.value = "";
+      scheduleTime.value = "09:30";
+      scheduleEnabled.checked = true;
+      loadState();
+    }
+    async function sendNow() {
+      if (!sendMessage.value) return alert("Выберите рекламный текст.");
+      const result = await api("send-now", { city: sendCity.value, messageId: sendMessage.value });
+      alert(platform === "telegram" ? `Отправлено: ${result.sent}/${result.total}` : "Facebook отправка подготовлена.");
+      loadState();
+    }
+    function editMessage(id) {
+      const message = (state.messages || []).find(item => item.id === id);
+      if (!message) return;
+      messageId.value = message.id;
+      messageTitle.value = message.title || "";
+      messageAudience.value = message.audience || "all";
+      messageBody.value = message.body || "";
+      messageImageUrl.value = message.image_url || "";
+      messageEnabled.checked = !!message.enabled;
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+    function editSchedule(id) {
+      const item = (state.schedules || []).find(row => row.id === id);
+      if (!item) return;
+      scheduleId.value = item.id;
+      scheduleCity.value = item.city || "";
+      scheduleTime.value = item.send_time || "09:30";
+      scheduleMessage.value = item.message_id || "";
+      scheduleEnabled.checked = !!item.enabled;
+    }
+"""
+
+
+TELEGRAM_ADS_HTML = r"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Реклама Telegram</title>
+  <style>""" + MARKETING_PAGE_STYLE + r"""</style>
+</head>
+<body class="locked">
+  <header>
+    <h1>Реклама Telegram</h1>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
+  </header>
+  <main>
+    <div class="note">Чтобы бот видел ключевые слова в группах, в BotFather нужно отключить privacy mode: /setprivacy -> @ogarniemy_pro_bot -> Disable. Это должен сделать владелец Telegram-бота.</div>
+    <section class="grid">
+      <div class="panel"><h2>Города</h2><form onsubmit="saveCity(event)"><input id="cityName" placeholder="Warszawa" required><button>Добавить город</button></form><div id="cities" class="cards"></div></div>
+      <div class="panel"><h2>Добавить Telegram-чат</h2><form id="groupForm"><input id="groupTitle" placeholder="Название группы" required><input id="groupChatId" placeholder="Chat ID, например -100..." required><select id="groupCity"></select><textarea id="groupKeywords" placeholder="мастер, сантехник, электрик, ремонт"></textarea><label><input id="groupEnabled" type="checkbox" checked> Активна</label><button>Сохранить чат</button></form></div>
+      <div class="panel full"><h2>Рекламный текст и картинка</h2><form onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><div class="row"><input id="messageTitle" placeholder="Название текста" required><select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select><label><input id="messageEnabled" type="checkbox" checked> Активен</label></div><textarea id="messageBody" placeholder="Текст рекламы" required></textarea><input id="messageImageUrl" placeholder="Ссылка на картинку, например https://ogarniemy.pro/assets/banner.jpg"><button>Сохранить рекламный материал</button></form></div>
+      <div class="panel"><h2>Расписание</h2><form onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><select id="scheduleCity"></select><input id="scheduleTime" type="time" value="09:30" required><select id="scheduleMessage"></select><label><input id="scheduleEnabled" type="checkbox" checked> Включено</label><button>Сохранить время</button></form></div>
+      <div class="panel"><h2>Отправить сейчас</h2><select id="sendCity"></select><select id="sendMessage"></select><button class="success" onclick="sendNow()">Отправить сейчас</button></div>
+      <div class="panel full"><h2>Что уже добавлено</h2><div id="summary" class="cards"></div></div>
+      <div class="panel full"><h2>Журнал</h2><div id="logs" class="cards"></div></div>
+    </section>
+  </main>
+  <script>
+    const platform = "telegram";
+""" + MARKETING_PAGE_SCRIPT + r"""
+    groupForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      await api("telegram-group", { title: groupTitle.value, chatId: groupChatId.value, city: groupCity.value, keywords: groupKeywords.value, enabled: groupEnabled.checked });
+      groupTitle.value = ""; groupChatId.value = ""; groupKeywords.value = ""; groupEnabled.checked = true;
+      loadState();
+    });
+    function render() {
+      const citySelects = [groupCity, scheduleCity, sendCity];
+      citySelects.forEach(select => select.innerHTML = cityOptions(select.value));
+      [scheduleMessage, sendMessage].forEach(select => select.innerHTML = messageOptions(select.value));
+      cities.innerHTML = (state.cities || []).map(city => `<span class="pill">${escapeHtml(city.name)}</span>`).join("") || "<p class='meta'>Города пока не добавлены.</p>";
+      summary.innerHTML = `
+        <h3>Чаты</h3>${(state.groups || []).map(group => `<article class="item ${group.enabled ? "" : "off"}"><strong>${escapeHtml(group.title || group.chat_id)}</strong><p class="meta">${escapeHtml(group.city)} · ${escapeHtml(group.chat_id)}</p><p>${escapeHtml(group.keywords || "")}</p></article>`).join("") || "<p class='meta'>Чаты пока не добавлены.</p>"}
+        <h3>Рекламные материалы</h3>${(state.messages || []).map(message => `<article class="item ${message.enabled ? "" : "off"}"><strong>#${message.id} ${escapeHtml(message.title)}</strong><p>${escapeHtml(message.body)}</p>${message.image_url ? `<img class="preview" src="${escapeHtml(message.image_url)}">` : ""}<button class="secondary" onclick="editMessage(${message.id})">Редактировать</button></article>`).join("") || "<p class='meta'>Материалы пока не добавлены.</p>"}
+        <h3>Расписание</h3>${(state.schedules || []).map(item => `<article class="item ${item.enabled ? "" : "off"}"><strong>${escapeHtml(item.send_time)}</strong><p class="meta">${escapeHtml(item.city || "Все города")} · текст #${item.message_id} · последняя отправка: ${escapeHtml(item.last_sent_date || "нет")}</p><button class="secondary" onclick="editSchedule(${item.id})">Редактировать</button></article>`).join("") || "<p class='meta'>Расписание пока не добавлено.</p>"}
+        <h3>Ключевые слова сработали</h3>${(state.hits || []).map(hit => `<article class="item"><strong>${escapeHtml(hit.keyword)}</strong><p class="meta">${formatDate(hit.created_at)} · ${escapeHtml(hit.username || "")}</p><p>${escapeHtml(hit.message || "")}</p></article>`).join("") || "<p class='meta'>Срабатываний пока нет.</p>"}
+      `;
+      logs.innerHTML = (state.logs || []).map(log => `<article class="item"><strong>${escapeHtml(log.action)} · ${escapeHtml(log.status)}</strong><p class="meta">${formatDate(log.created_at)} · ${escapeHtml(log.city || "")} · ${escapeHtml(log.target_type)}</p><p>${escapeHtml(log.detail || "")}</p></article>`).join("") || "<p class='meta'>Журнал пока пуст.</p>";
+    }
+    requireAdminAccess(loadState);
+  </script>
+</body>
+</html>"""
+
+
+FACEBOOK_ADS_HTML = r"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Реклама Facebook</title>
+  <style>""" + MARKETING_PAGE_STYLE + r"""</style>
+</head>
+<body class="locked">
+  <header>
+    <h1>Реклама Facebook</h1>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
+  </header>
+  <main>
+    <div class="note">Facebook лучше использовать как входящий канал: реклама ведет в Messenger или на сайт, бот отвечает тем, кто сам написал. Массовые ежедневные личные сообщения незнакомым людям Facebook ограничивает.</div>
+    <section class="grid">
+      <div class="panel"><h2>Города</h2><form onsubmit="saveCity(event)"><input id="cityName" placeholder="Warszawa" required><button>Добавить город</button></form><div id="cities" class="cards"></div></div>
+      <div class="panel"><h2>Facebook-цели</h2><form id="targetForm"><input id="targetName" placeholder="Страница / кампания / группа" required><input id="targetId" placeholder="ID или ссылка"><select id="targetCity"></select><textarea id="targetNotes" placeholder="Заметки: аудитория, бюджет, что проверить"></textarea><label><input id="targetEnabled" type="checkbox" checked> Активна</label><button>Сохранить цель</button></form></div>
+      <div class="panel full"><h2>Рекламный текст и картинка</h2><form onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><div class="row"><input id="messageTitle" placeholder="Название текста" required><select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select><label><input id="messageEnabled" type="checkbox" checked> Активен</label></div><textarea id="messageBody" placeholder="Текст рекламы / Messenger-ответ" required></textarea><input id="messageImageUrl" placeholder="Ссылка на картинку"><button>Сохранить рекламный материал</button></form></div>
+      <div class="panel"><h2>Расписание подготовки</h2><form onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><select id="scheduleCity"></select><input id="scheduleTime" type="time" value="10:00" required><select id="scheduleMessage"></select><label><input id="scheduleEnabled" type="checkbox" checked> Включено</label><button>Сохранить время</button></form></div>
+      <div class="panel"><h2>Подготовить сейчас</h2><select id="sendCity"></select><select id="sendMessage"></select><button class="success" onclick="sendNow()">Подготовить сейчас</button></div>
+      <div class="panel full"><h2>Что уже добавлено</h2><div id="summary" class="cards"></div></div>
+      <div class="panel full"><h2>Журнал</h2><div id="logs" class="cards"></div></div>
+    </section>
+  </main>
+  <script>
+    const platform = "facebook";
+""" + MARKETING_PAGE_SCRIPT + r"""
+    targetForm.addEventListener("submit", async event => {
+      event.preventDefault();
+      await api("facebook-target", { name: targetName.value, targetId: targetId.value, city: targetCity.value, notes: targetNotes.value, enabled: targetEnabled.checked });
+      targetName.value = ""; targetId.value = ""; targetNotes.value = ""; targetEnabled.checked = true;
+      loadState();
+    });
+    function render() {
+      [targetCity, scheduleCity, sendCity].forEach(select => select.innerHTML = cityOptions(select.value));
+      [scheduleMessage, sendMessage].forEach(select => select.innerHTML = messageOptions(select.value));
+      cities.innerHTML = (state.cities || []).map(city => `<span class="pill">${escapeHtml(city.name)}</span>`).join("") || "<p class='meta'>Города пока не добавлены.</p>";
+      summary.innerHTML = `
+        <h3>Facebook-цели</h3>${(state.targets || []).map(target => `<article class="item ${target.enabled ? "" : "off"}"><strong>${escapeHtml(target.name)}</strong><p class="meta">${escapeHtml(target.city)} · ${escapeHtml(target.target_id || "")}</p><p>${escapeHtml(target.notes || "")}</p></article>`).join("") || "<p class='meta'>Цели пока не добавлены.</p>"}
+        <h3>Рекламные материалы</h3>${(state.messages || []).map(message => `<article class="item ${message.enabled ? "" : "off"}"><strong>#${message.id} ${escapeHtml(message.title)}</strong><p>${escapeHtml(message.body)}</p>${message.image_url ? `<img class="preview" src="${escapeHtml(message.image_url)}">` : ""}<button class="secondary" onclick="editMessage(${message.id})">Редактировать</button></article>`).join("") || "<p class='meta'>Материалы пока не добавлены.</p>"}
+        <h3>Расписание</h3>${(state.schedules || []).map(item => `<article class="item ${item.enabled ? "" : "off"}"><strong>${escapeHtml(item.send_time)}</strong><p class="meta">${escapeHtml(item.city || "Все города")} · текст #${item.message_id} · последняя подготовка: ${escapeHtml(item.last_sent_date || "нет")}</p><button class="secondary" onclick="editSchedule(${item.id})">Редактировать</button></article>`).join("") || "<p class='meta'>Расписание пока не добавлено.</p>"}
+      `;
+      logs.innerHTML = (state.logs || []).map(log => `<article class="item"><strong>${escapeHtml(log.action)} · ${escapeHtml(log.status)}</strong><p class="meta">${formatDate(log.created_at)} · ${escapeHtml(log.city || "")} · ${escapeHtml(log.target_type)}</p><p>${escapeHtml(log.detail || "")}</p></article>`).join("") || "<p class='meta'>Журнал пока пуст.</p>";
+    }
+    requireAdminAccess(loadState);
+  </script>
+</body>
+</html>"""
+
+
 SETTINGS_HTML = r"""<!doctype html>
 <html lang="ru">
 <head>
@@ -6195,7 +6619,7 @@ SETTINGS_HTML = r"""<!doctype html>
     body.locked header, body.locked main { display: none; }
     header { background: linear-gradient(135deg, #0f766e 0%, #2563eb 48%, #7c3aed 100%); color: white; padding: 24px 28px; }
     main { max-width: 760px; margin: 0 auto; padding: 24px; }
-    nav { display: grid; grid-template-columns: repeat(7, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1120px; }
+    nav { display: grid; grid-template-columns: repeat(9, minmax(112px, 1fr)); gap: 10px; margin-top: 12px; max-width: 1320px; }
     nav a { display: flex; align-items: center; justify-content: center; min-height: 44px; box-sizing: border-box; color: var(--ink); background: var(--gold); font-weight: bold; padding: 8px 10px; border-radius: 8px; text-align: center; line-height: 1.15; text-decoration: none; }
     form { background: rgba(255,255,255,.94); border-left: 6px solid var(--teal); border-radius: 8px; padding: 18px; box-shadow: 0 14px 34px rgba(23,32,38,.1); }
     label { display: block; font-weight: 700; margin-top: 14px; }
@@ -6209,7 +6633,7 @@ SETTINGS_HTML = r"""<!doctype html>
 <body class="locked">
   <header>
     <h1>Настройки</h1>
-    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/settings">Настройки</a></nav>
+    <nav><a href="/server">Задания</a> <a href="/users">Сотрудники</a> <a href="/clients">Клиенты</a> <a href="/completed">Выполненные задания</a> <a href="/calculations">Расчеты сотрудников</a> <a href="/client-calculations">Расчеты клиентов</a> <a href="/telegram-ads">Реклама Telegram</a> <a href="/facebook-ads">Реклама Facebook</a> <a href="/settings">Настройки</a></nav>
   </header>
   <main>
     <form id="settingsForm">
