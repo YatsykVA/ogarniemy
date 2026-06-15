@@ -1,5 +1,5 @@
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 import base64
 import hashlib
@@ -630,6 +630,9 @@ class App(BaseHTTPRequestHandler):
         if self.redirect_to_canonical_host():
             return
         path = urlparse(self.path).path
+        if path == "/facebook/webhook":
+            self.handle_facebook_webhook_verify()
+            return
         if path == "/":
             self.send_static_file("index.html")
             return
@@ -736,6 +739,9 @@ class App(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/facebook/webhook":
+            self.handle_facebook_webhook_event()
+            return
         if path == "/api/login":
             self.handle_login()
             return
@@ -3358,6 +3364,38 @@ class App(BaseHTTPRequestHandler):
         marketing_bot.init_db()
         return marketing_bot
 
+    def send_plain(self, text, status=200):
+        body = str(text or "").encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_facebook_webhook_verify(self):
+        params = parse_qs(urlparse(self.path).query)
+        verify_token = os.environ.get("FACEBOOK_VERIFY_TOKEN", "ogarniemy-verify")
+        token = params.get("hub.verify_token", [""])[0]
+        challenge = params.get("hub.challenge", [""])[0]
+        if token != verify_token:
+            self.send_plain("bad verify token", 403)
+            return
+        self.send_plain(challenge)
+
+    def handle_facebook_webhook_event(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length).decode("utf-8") if length else "{}"
+        try:
+            payload = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            self.send_json({"error": "bad_json"}, 400)
+            return
+        marketing = self.marketing()
+        for entry in payload.get("entry", []):
+            for event in entry.get("messaging", []):
+                marketing.handle_facebook_event(event)
+        self.send_plain("ok")
+
     def handle_marketing_state(self, platform):
         if not self.is_admin():
             self.send_json({"error": "admin_unauthorized"}, 401)
@@ -3373,7 +3411,7 @@ class App(BaseHTTPRequestHandler):
             (platform,),
         ).fetchall()]
         schedules = [dict(row) for row in conn.execute(
-            "select id, city, send_time, message_id, enabled, last_sent_date from marketing_schedules where platform = ? order by send_time, city",
+            "select id, city, target_id, send_time, message_id, enabled, last_sent_date from marketing_schedules where platform = ? order by send_time, target_id",
             (platform,),
         ).fetchall()]
         logs = [dict(row) for row in conn.execute(
@@ -3382,7 +3420,7 @@ class App(BaseHTTPRequestHandler):
         ).fetchall()]
         if platform == "telegram":
             groups = [dict(row) for row in conn.execute(
-                "select chat_id, title, city, keywords, enabled, created_at from telegram_groups order by city, title"
+                "select chat_id, title, city, keywords, enabled, watch_enabled, target_chat_id, response_message_id, notes, created_at from telegram_groups order by title"
             ).fetchall()]
             subscribers = [dict(row) for row in conn.execute(
                 "select role, city, count(*) count from telegram_subscribers where stopped_at is null group by role, city order by role, city"
@@ -3394,7 +3432,7 @@ class App(BaseHTTPRequestHandler):
             self.send_json({"cities": cities, "groups": groups, "subscribers": subscribers, "messages": messages, "schedules": schedules, "logs": logs, "hits": hits})
             return
         targets = [dict(row) for row in conn.execute(
-            "select id, name, city, target_id, notes, enabled, created_at from facebook_targets order by city, name"
+            "select id, name, city, target_id, notes, keywords, action, response_message_id, enabled, created_at from facebook_targets order by name"
         ).fetchall()]
         subscribers = [dict(row) for row in conn.execute(
             "select role, city, count(*) count from facebook_subscribers where stopped_at is null group by role, city order by role, city"
@@ -3431,26 +3469,64 @@ class App(BaseHTTPRequestHandler):
                 )
             elif action == "telegram-group" and platform == "telegram":
                 chat_id = int(str(data.get("chatId", "")).strip())
+                target_chat_id = str(data.get("targetChatId", "")).strip()
+                if target_chat_id == "__same_group__":
+                    target_chat_id = ""
                 conn.execute(
                     """
-                    insert into telegram_groups(chat_id, title, city, keywords, enabled, created_at)
-                    values(?, ?, ?, ?, ?, ?)
-                    on conflict(chat_id) do update set title = excluded.title, city = excluded.city, keywords = excluded.keywords, enabled = excluded.enabled
+                    insert into telegram_groups(chat_id, title, city, keywords, enabled, watch_enabled, target_chat_id, response_message_id, notes, created_at)
+                    values(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    on conflict(chat_id) do update set
+                      title = excluded.title,
+                      city = excluded.city,
+                      keywords = excluded.keywords,
+                      enabled = excluded.enabled,
+                      watch_enabled = excluded.watch_enabled,
+                      target_chat_id = excluded.target_chat_id,
+                      response_message_id = excluded.response_message_id,
+                      notes = excluded.notes
                     """,
-                    (chat_id, str(data.get("title", "")).strip(), str(data.get("city", "")).strip(), str(data.get("keywords", "")).strip(), 1 if data.get("enabled", True) else 0, now),
+                    (
+                        chat_id,
+                        str(data.get("title", "")).strip(),
+                        "",
+                        str(data.get("keywords", "")).strip(),
+                        1 if data.get("enabled", True) else 0,
+                        1 if data.get("watchEnabled", False) else 0,
+                        target_chat_id,
+                        int(data.get("responseMessageId") or 0) or None,
+                        str(data.get("notes", "")).strip(),
+                        now,
+                    ),
                 )
             elif action == "facebook-target" and platform == "facebook":
                 target_id = data.get("id")
                 if target_id:
                     conn.execute(
-                        "update facebook_targets set name = ?, city = ?, target_id = ?, notes = ?, enabled = ? where id = ?",
-                        (str(data.get("name", "")).strip(), str(data.get("city", "")).strip(), str(data.get("targetId", "")).strip(), str(data.get("notes", "")).strip(), 1 if data.get("enabled", True) else 0, int(target_id)),
+                        "update facebook_targets set name = ?, city = ?, target_id = ?, notes = ?, keywords = ?, action = ?, response_message_id = ?, enabled = ? where id = ?",
+                        (str(data.get("name", "")).strip(), "", str(data.get("targetId", "")).strip(), str(data.get("notes", "")).strip(), str(data.get("keywords", "")).strip(), str(data.get("targetAction", "same_group")).strip(), int(data.get("responseMessageId") or 0) or None, 1 if data.get("enabled", True) else 0, int(target_id)),
                     )
                 else:
                     conn.execute(
-                        "insert into facebook_targets(name, city, target_id, notes, enabled, created_at) values(?, ?, ?, ?, ?, ?)",
-                        (str(data.get("name", "")).strip(), str(data.get("city", "")).strip(), str(data.get("targetId", "")).strip(), str(data.get("notes", "")).strip(), 1 if data.get("enabled", True) else 0, now),
+                        "insert into facebook_targets(name, city, target_id, notes, keywords, action, response_message_id, enabled, created_at) values(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (str(data.get("name", "")).strip(), "", str(data.get("targetId", "")).strip(), str(data.get("notes", "")).strip(), str(data.get("keywords", "")).strip(), str(data.get("targetAction", "same_group")).strip(), int(data.get("responseMessageId") or 0) or None, 1 if data.get("enabled", True) else 0, now),
                     )
+            elif action == "delete":
+                kind = str(data.get("kind", "")).strip()
+                item_id = str(data.get("id", "")).strip()
+                if kind == "telegram-group" and platform == "telegram":
+                    conn.execute("delete from telegram_groups where chat_id = ?", (int(item_id),))
+                elif kind == "facebook-target" and platform == "facebook":
+                    conn.execute("delete from facebook_targets where id = ?", (int(item_id),))
+                elif kind == "message":
+                    conn.execute("delete from marketing_messages where id = ? and platform = ?", (int(item_id), platform))
+                elif kind == "schedule":
+                    conn.execute("delete from marketing_schedules where id = ? and platform = ?", (int(item_id), platform))
+                else:
+                    self.send_json({"error": "bad_delete_kind"}, 400)
+                    return
+            elif action == "clear-logs":
+                conn.execute("delete from marketing_logs where platform = ?", (platform,))
             elif action == "upload-image":
                 content_type = str(data.get("contentType", "")).split(";", 1)[0].strip().lower()
                 allowed = {
@@ -3506,6 +3582,7 @@ class App(BaseHTTPRequestHandler):
             elif action == "schedule":
                 schedule_id = data.get("id")
                 city = str(data.get("city", "")).strip()
+                target_id = str(data.get("targetId", "")).strip()
                 send_time = str(data.get("sendTime", "")).strip()
                 message_id = int(data.get("messageId") or 0)
                 if len(send_time) != 5 or ":" not in send_time or not message_id:
@@ -3513,17 +3590,18 @@ class App(BaseHTTPRequestHandler):
                     return
                 if schedule_id:
                     conn.execute(
-                        "update marketing_schedules set city = ?, send_time = ?, message_id = ?, enabled = ? where id = ? and platform = ?",
-                        (city, send_time, message_id, 1 if data.get("enabled", True) else 0, int(schedule_id), platform),
+                        "update marketing_schedules set city = ?, target_id = ?, send_time = ?, message_id = ?, enabled = ? where id = ? and platform = ?",
+                        (city, target_id, send_time, message_id, 1 if data.get("enabled", True) else 0, int(schedule_id), platform),
                     )
                 else:
                     conn.execute(
-                        "insert into marketing_schedules(platform, city, send_time, message_id, enabled, created_at) values(?, ?, ?, ?, ?, ?)",
-                        (platform, city, send_time, message_id, 1 if data.get("enabled", True) else 0, now),
+                        "insert into marketing_schedules(platform, city, target_id, send_time, message_id, enabled, created_at) values(?, ?, ?, ?, ?, ?, ?)",
+                        (platform, city, target_id, send_time, message_id, 1 if data.get("enabled", True) else 0, now),
                     )
             elif action == "send-now":
                 message_id = int(data.get("messageId") or 0)
                 city = str(data.get("city", "")).strip()
+                target_id = str(data.get("targetId", "")).strip()
                 message = conn.execute("select body, image_url from marketing_messages where id = ? and platform = ?", (message_id, platform)).fetchone()
                 if not message:
                     self.send_json({"error": "message_not_found"}, 404)
@@ -3531,7 +3609,7 @@ class App(BaseHTTPRequestHandler):
                 conn.commit()
                 conn.close()
                 if platform == "telegram":
-                    sent, total = marketing.post_to_groups(message["body"], message["image_url"] or "", city)
+                    sent, total = marketing.post_to_groups(message["body"], message["image_url"] or "", city, target_id)
                     self.send_json({"ok": True, "sent": sent, "total": total})
                     return
                 marketing.log_marketing("facebook", "manual", "", city, "send_now", "prepared", "Facebook отправка требует подключенного Page Access Token и входящих подписчиков.")
@@ -7164,6 +7242,277 @@ SETTINGS_HTML = r"""<!doctype html>
       passwordMessage.textContent = "Пароль сброшен.";
     });
     requireAdminAccess(loadSettings);
+  </script>
+</body>
+</html>"""
+
+
+APPROVED_MARKETING_STYLE = r"""
+    :root { --bg:#f6f7f9; --surface:#fff; --line:#dfe4ea; --text:#17202a; --muted:#667085; --blue:#2563eb; --green:#12805c; --red:#b42318; --amber:#a15c07; --shadow:0 18px 48px rgba(17,24,39,.08); }
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; font-family:Arial, sans-serif; color:var(--text); background:var(--bg); }
+    body.locked header, body.locked main { display:none; }
+    header { background:#111827; color:white; padding:20px 24px; }
+    header h1 { margin:0 0 12px; font-size:28px; }
+    nav { display:grid; grid-template-columns:repeat(9,minmax(104px,1fr)); gap:8px; }
+    nav a { min-height:40px; display:flex; align-items:center; justify-content:center; padding:8px; border-radius:8px; background:#f6c85f; color:#17202a; text-decoration:none; font-weight:700; text-align:center; line-height:1.15; }
+    main { max-width:1280px; margin:0 auto; padding:24px; }
+    .topbar { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:18px; }
+    .topbar p { margin:6px 0 0; color:var(--muted); }
+    .status-row { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+    .pill { min-height:30px; border-radius:999px; padding:6px 10px; display:inline-flex; align-items:center; font-size:13px; font-weight:700; white-space:nowrap; }
+    .pill.blue { color:#1647a8; background:#eaf1ff; } .pill.green { color:var(--green); background:#e8f6ef; } .pill.amber { color:var(--amber); background:#fff7e6; }
+    .content { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(320px,.85fr); gap:18px; align-items:start; }
+    .section { background:var(--surface); border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); overflow:hidden; margin-bottom:18px; }
+    .section-header { padding:16px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    .section-header h2 { margin:0; font-size:17px; } .section-header p { margin:5px 0 0; color:var(--muted); font-size:13px; }
+    .section-body { padding:16px; }
+    .form-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-bottom:14px; }
+    .full { grid-column:1 / -1; }
+    label { display:grid; gap:6px; color:#344054; font-size:13px; font-weight:700; }
+    input, textarea, select, button { font:inherit; }
+    input, textarea, select { width:100%; min-height:38px; border-radius:7px; border:1px solid #cfd7e3; padding:8px 10px; color:var(--text); background:white; }
+    textarea { min-height:82px; resize:vertical; }
+    button { border:0; cursor:pointer; min-height:38px; border-radius:7px; padding:0 13px; font-weight:700; color:#344054; background:#eef2f7; }
+    button.primary { color:white; background:var(--blue); } button.danger { color:var(--red); background:#fff0ee; } button.ghost { background:white; border:1px solid var(--line); }
+    .form-actions { display:flex; justify-content:flex-end; gap:10px; flex-wrap:wrap; }
+    .items { display:grid; gap:10px; }
+    .item { border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfcfe; display:grid; gap:8px; }
+    .item-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    .item-title { display:grid; gap:4px; min-width:0; } .item-title strong { overflow-wrap:anywhere; }
+    .meta, .item-title span { color:var(--muted); font-size:13px; line-height:1.35; }
+    .item-actions { display:flex; gap:6px; flex-shrink:0; }
+    .tag { min-height:26px; border-radius:999px; padding:5px 9px; background:#eef2f7; color:#344054; font-size:12px; font-weight:700; display:inline-flex; margin:2px; }
+    .preview-thumb { width:68px; height:68px; border-radius:7px; background:#e9edf3; display:grid; place-items:center; color:#667085; font-size:12px; overflow:hidden; }
+    .preview-thumb img, img.preview { width:100%; height:100%; object-fit:cover; }
+    img.preview { max-width:180px; height:auto; border-radius:8px; }
+    .send-now { margin-top:18px; padding:16px; background:#101828; color:white; border-radius:8px; display:flex; align-items:center; justify-content:space-between; gap:16px; }
+    .send-now span { display:block; margin-top:4px; color:#c7d0dd; font-size:13px; }
+    .empty { color:var(--muted); border:1px dashed var(--line); border-radius:8px; padding:14px; text-align:center; font-size:14px; }
+    @media (max-width:1100px) { .content { grid-template-columns:1fr; } nav { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+    @media (max-width:640px) { main { padding:16px; } .topbar, .send-now { flex-direction:column; } .form-grid { grid-template-columns:1fr; } .item-head { flex-direction:column; } }
+"""
+
+
+APPROVED_MARKETING_SCRIPT = r"""
+    let state = {};
+    let adminPassword = sessionStorage.getItem("adminPassword") || "";
+    const SAME_GROUP = "__same_group__";
+    function adminHeaders(extra = {}) {
+      if (!adminPassword) {
+        adminPassword = prompt("Admin password") || "";
+        sessionStorage.setItem("adminPassword", adminPassword);
+      }
+      return { "X-Admin-Password": adminPassword, ...extra };
+    }
+    async function requireAdminAccess(start) {
+      while (true) {
+        if (!adminPassword) adminPassword = prompt("Admin password") || "";
+        if (!adminPassword) { document.body.innerHTML = ""; return; }
+        sessionStorage.setItem("adminPassword", adminPassword);
+        const res = await fetch("/api/admin/check-password", { headers: { "X-Admin-Password": adminPassword } });
+        if (res.ok) { document.body.classList.remove("locked"); start(); return; }
+        sessionStorage.removeItem("adminPassword"); adminPassword = "";
+      }
+    }
+    const esc = value => String(value ?? "").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+    const fmt = value => value ? new Date(Number(value) * 1000).toLocaleString("ru-RU") : "";
+    async function api(action, data = {}) {
+      const res = await fetch(`/api/admin/marketing/${platform}/${action}`, { method:"POST", headers:adminHeaders({ "Content-Type":"application/json" }), body:JSON.stringify(data) });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.error || res.status);
+      return payload;
+    }
+    async function loadState() {
+      const res = await fetch(`/api/admin/marketing/${platform}`, { headers:adminHeaders() });
+      state = await res.json();
+      render();
+    }
+    function messageOptions(selected = "") {
+      return (state.messages || []).map(item => `<option value="${item.id}" ${String(item.id) === String(selected) ? "selected" : ""}>#${item.id} ${esc(item.title)}</option>`).join("");
+    }
+    function targetOptions(selected = "") {
+      if (platform === "telegram") {
+        const groups = (state.groups || []).filter(item => item.enabled);
+        return `<option value="">Все рекламные группы</option>` + groups.map(item => `<option value="${item.chat_id}" ${String(item.chat_id) === String(selected) ? "selected" : ""}>${esc(item.title || item.chat_id)}</option>`).join("");
+      }
+      const targets = state.targets || [];
+      return `<option value="">Все Facebook-группы</option>` + targets.map(item => `<option value="${item.id}" ${String(item.id) === String(selected) ? "selected" : ""}>${esc(item.name)}</option>`).join("");
+    }
+    function watchTargetOptions(selected = "") {
+      const groups = (state.groups || []).filter(item => item.enabled);
+      return `<option value="${SAME_GROUP}" ${!selected ? "selected" : ""}>Не пересылать, ответить в этой же группе</option>` + groups.map(item => `<option value="${item.chat_id}" ${String(item.chat_id) === String(selected) ? "selected" : ""}>Переслать в: ${esc(item.title || item.chat_id)}</option>`).join("");
+    }
+    function imageFromFile(input, target) {
+      const file = input.files && input.files[0];
+      if (!file) return Promise.resolve(target.value);
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = async () => {
+          try {
+            const result = await api("upload-image", { name:file.name, contentType:file.type, content:reader.result });
+            target.value = result.url || "";
+            input.value = "";
+            resolve(target.value);
+          } catch (error) { reject(error); }
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+    }
+    async function saveOwned(event) {
+      event.preventDefault();
+      await api("telegram-group", { chatId:ownedChatId.value, title:ownedTitle.value, notes:ownedNotes.value, enabled:true, watchEnabled:false });
+      event.target.reset(); loadState();
+    }
+    async function saveWatch(event) {
+      event.preventDefault();
+      await api("telegram-group", { chatId:watchChatId.value, title:watchTitle.value, keywords:watchKeywords.value, targetChatId:watchTarget.value, responseMessageId:watchMaterial.value, notes:watchNotes.value, enabled:watchAdEnabled.checked, watchEnabled:true });
+      event.target.reset(); watchAdEnabled.checked = false; loadState();
+    }
+    async function saveFacebookTarget(event) {
+      event.preventDefault();
+      await api("facebook-target", { id:fbTargetId.value || null, name:fbTargetName.value, targetId:fbTargetLink.value, keywords:fbKeywords.value, targetAction:fbAction.value, responseMessageId:fbMaterial.value, notes:fbNotes.value, enabled:fbEnabled.checked });
+      event.target.reset(); fbEnabled.checked = true; fbAction.value = "same_group"; loadState();
+    }
+    async function saveMessage(event) {
+      event.preventDefault();
+      try { await imageFromFile(messageImageFile, messageImageUrl); } catch (error) { alert("Не удалось загрузить картинку."); return; }
+      await api("message", { id:messageId.value || null, title:messageTitle.value, audience:messageAudience.value, body:messageBody.value, imageUrl:messageImageUrl.value, enabled:messageEnabled.checked });
+      event.target.reset(); messageEnabled.checked = true; messageId.value = ""; loadState();
+    }
+    async function saveSchedule(event) {
+      event.preventDefault();
+      await api("schedule", { id:scheduleId.value || null, targetId:scheduleTarget.value, sendTime:scheduleTime.value, messageId:scheduleMessage.value, enabled:scheduleEnabled.checked });
+      event.target.reset(); scheduleTime.value = platform === "telegram" ? "09:30" : "10:00"; scheduleEnabled.checked = true; loadState();
+    }
+    async function sendNow() {
+      if (!sendMessage.value) return alert("Выберите рекламный материал.");
+      const result = await api("send-now", { targetId:sendTarget.value, messageId:sendMessage.value });
+      alert(platform === "telegram" ? `Отправлено: ${result.sent}/${result.total}` : "Facebook отправка подготовлена.");
+      loadState();
+    }
+    async function deleteItem(kind, id) {
+      if (!confirm("Удалить?")) return;
+      await api("delete", { kind, id });
+      loadState();
+    }
+    async function clearLogs() {
+      if (!confirm("Очистить журнал?")) return;
+      await api("clear-logs", {});
+      loadState();
+    }
+    function editMessage(id) {
+      const item = (state.messages || []).find(row => row.id === id);
+      if (!item) return;
+      messageId.value = item.id; messageTitle.value = item.title || ""; messageAudience.value = item.audience || "all"; messageBody.value = item.body || ""; messageImageUrl.value = item.image_url || ""; messageEnabled.checked = !!item.enabled;
+      window.scrollTo({ top: document.querySelector("#messagePanel").offsetTop - 20, behavior:"smooth" });
+    }
+    function editSchedule(id) {
+      const item = (state.schedules || []).find(row => row.id === id);
+      if (!item) return;
+      scheduleId.value = item.id; scheduleTarget.value = item.target_id || ""; scheduleTime.value = item.send_time || "09:30"; scheduleMessage.value = item.message_id || ""; scheduleEnabled.checked = !!item.enabled;
+    }
+    function editTelegramGroup(chatId, mode) {
+      const item = (state.groups || []).find(row => String(row.chat_id) === String(chatId));
+      if (!item) return;
+      if (mode === "watch") {
+        watchTitle.value = item.title || ""; watchChatId.value = item.chat_id || ""; watchKeywords.value = item.keywords || ""; watchTarget.value = item.target_chat_id || SAME_GROUP; watchMaterial.value = item.response_message_id || ""; watchNotes.value = item.notes || ""; watchAdEnabled.checked = !!item.enabled;
+      } else {
+        ownedTitle.value = item.title || ""; ownedChatId.value = item.chat_id || ""; ownedNotes.value = item.notes || "";
+      }
+    }
+    function editFacebookTarget(id) {
+      const item = (state.targets || []).find(row => String(row.id) === String(id));
+      if (!item) return;
+      fbTargetId.value = item.id; fbTargetName.value = item.name || ""; fbTargetLink.value = item.target_id || ""; fbKeywords.value = item.keywords || ""; fbAction.value = item.action || "same_group"; fbMaterial.value = item.response_message_id || ""; fbNotes.value = item.notes || ""; fbEnabled.checked = !!item.enabled;
+    }
+    function renderCommonSelects() {
+      [scheduleTarget, sendTarget].forEach(select => select.innerHTML = targetOptions(select.value));
+      [scheduleMessage, sendMessage].forEach(select => select.innerHTML = messageOptions(select.value));
+      if (platform === "telegram") {
+        watchTarget.innerHTML = watchTargetOptions(watchTarget.value);
+        watchMaterial.innerHTML = messageOptions(watchMaterial.value);
+      } else {
+        fbMaterial.innerHTML = messageOptions(fbMaterial.value);
+      }
+    }
+    function renderMessages() {
+      messagesList.innerHTML = (state.messages || []).map(item => `<article class="item ${item.enabled ? "" : "off"}"><div class="item-head"><div class="item-title"><strong>#${item.id} ${esc(item.title)}</strong><span>${esc((item.body || "").slice(0, 140))}</span></div><div class="item-actions"><button onclick="editMessage(${item.id})">Редактировать</button><button class="danger" onclick="deleteItem('message', ${item.id})">Удалить</button></div></div>${item.image_url ? `<img class="preview" src="${esc(item.image_url)}">` : `<div class="meta">Картинка не выбрана</div>`}</article>`).join("") || `<div class="empty">Пока нет рекламных материалов</div>`;
+    }
+    function renderSchedules() {
+      schedulesList.innerHTML = (state.schedules || []).map(item => `<article class="item ${item.enabled ? "" : "off"}"><div class="item-head"><div class="item-title"><strong>${esc(item.send_time)}</strong><span>Материал #${esc(item.message_id)} · цель: ${esc(item.target_id || "все")}</span></div><div class="item-actions"><button onclick="editSchedule(${item.id})">Редактировать</button><button class="danger" onclick="deleteItem('schedule', ${item.id})">Удалить</button></div></div><div class="meta">Последняя отправка: ${esc(item.last_sent_date || "нет")}</div></article>`).join("") || `<div class="empty">Пока нет расписаний</div>`;
+    }
+    function renderLogs() {
+      logs.innerHTML = (state.logs || []).map(item => `<article class="item"><strong>${esc(item.action)} · ${esc(item.status)}</strong><div class="meta">${fmt(item.created_at)} · ${esc(item.target_type || "")}</div><p>${esc(item.detail || "")}</p></article>`).join("") || `<div class="empty">Журнал очищен</div>`;
+    }
+"""
+
+
+TELEGRAM_ADS_HTML = r"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Реклама Telegram</title>
+  <style>""" + APPROVED_MARKETING_STYLE + r"""</style>
+</head>
+<body class="locked">
+  <header><h1>Реклама Telegram</h1><nav><a href="/server">Задания</a><a href="/users">Сотрудники</a><a href="/clients">Клиенты</a><a href="/completed">Выполненные задания</a><a href="/calculations">Расчеты сотрудников</a><a href="/client-calculations">Расчеты клиентов</a><a href="/telegram-ads">Реклама Telegram</a><a href="/facebook-ads">Реклама Facebook</a><a href="/settings">Настройки</a></nav></header>
+  <main>
+    <div class="topbar"><div><h1>Реклама Telegram</h1><p>Группы для рекламы, группы для поиска объявлений, материалы, расписание и журнал.</p></div><div class="status-row"><span class="pill blue" id="ownedCount">0 рекламных групп</span><span class="pill green" id="watchCount">0 групп поиска</span><span class="pill amber" id="scheduleCount">0 расписаний</span></div></div>
+    <div class="content"><div>
+      <section class="section"><div class="section-header"><div><h2>Telegram-группы для рекламы</h2><p>Ваши группы, куда бот отправляет рекламные материалы по расписанию.</p></div></div><div class="section-body"><form class="form-grid" onsubmit="saveOwned(event)"><label>Название группы<input id="ownedTitle" required></label><label>Chat ID<input id="ownedChatId" required placeholder="-100..."></label><label class="full">Комментарий<input id="ownedNotes"></label><div class="form-actions full"><button class="primary">Сохранить группу</button></div></form><div class="items" id="ownedList"></div></div></section>
+      <section class="section"><div class="section-header"><div><h2>Telegram-группы для поиска объявлений</h2><p>Бот ищет ключевые слова и отвечает в этой же группе или пересылает в выбранную вашу группу.</p></div></div><div class="section-body"><form class="form-grid" onsubmit="saveWatch(event)"><label>Группа поиска<input id="watchTitle" required></label><label>Chat ID<input id="watchChatId" required placeholder="-100..."></label><label>Действие при совпадении<select id="watchTarget"></select></label><label>Материал для комментария<select id="watchMaterial"></select></label><label class="full">Ключевые слова<input id="watchKeywords" placeholder="аренда, купить, срочно"></label><label class="full">Дополнительная заметка<textarea id="watchNotes"></textarea></label><label class="full"><input id="watchAdEnabled" type="checkbox"> Использовать эту группу также для рекламы</label><div class="form-actions full"><button class="primary">Сохранить поиск</button></div></form><div class="items" id="watchList"></div></div></section>
+      <section class="section" id="messagePanel"><div class="section-header"><div><h2>Рекламный материал</h2><p>Отдельный рекламный текст и картинка с компьютера.</p></div></div><div class="section-body"><form class="form-grid" onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><label>Название материала<input id="messageTitle" required></label><label>Аудитория<select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select></label><label class="full">Текст рекламы<textarea id="messageBody" required></textarea></label><label>Ссылка на картинку<input id="messageImageUrl"></label><label>Картинка с компьютера<input id="messageImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label><label class="full"><input id="messageEnabled" type="checkbox" checked> Материал включен</label><div class="form-actions full"><button class="primary">Сохранить рекламный материал</button></div></form><div class="items" id="messagesList"></div></div></section>
+      <section class="section"><div class="section-header"><div><h2>Расписание рекламы</h2><p>Выберите группу, материал и время публикации.</p></div></div><div class="section-body"><form class="form-grid" onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><label>Группа<select id="scheduleTarget"></select></label><label>Материал<select id="scheduleMessage"></select></label><label>Время<input id="scheduleTime" type="time" value="09:30" required></label><label><input id="scheduleEnabled" type="checkbox" checked> Расписание включено</label><div class="form-actions full"><button class="primary">Сохранить расписание</button></div></form><div class="items" id="schedulesList"></div></div></section>
+    </div><aside><section class="section"><div class="section-header"><div><h2>Найденные объявления</h2><p>Последние совпадения по ключевым словам.</p></div></div><div class="section-body"><div class="items" id="hitsList"></div></div></section><section class="section"><div class="section-header"><div><h2>Журнал Telegram</h2><p>Последние действия.</p></div><button class="danger" onclick="clearLogs()">Очистка журнала</button></div><div class="section-body"><div class="items" id="logs"></div></div></section></aside></div>
+    <div class="send-now"><div><strong>Отправить сейчас</strong><span>Ручная отправка выбранного рекламного материала.</span></div><div><select id="sendTarget"></select><select id="sendMessage"></select><button onclick="sendNow()">Отправить сейчас</button></div></div>
+  </main>
+  <script>const platform = "telegram";""" + APPROVED_MARKETING_SCRIPT + r"""
+    function render() {
+      renderCommonSelects(); renderMessages(); renderSchedules(); renderLogs();
+      const groups = state.groups || [];
+      const owned = groups.filter(item => item.enabled);
+      const watched = groups.filter(item => item.watch_enabled);
+      ownedCount.textContent = `${owned.length} рекламных групп`; watchCount.textContent = `${watched.length} групп поиска`; scheduleCount.textContent = `${(state.schedules || []).length} расписаний`;
+      ownedList.innerHTML = owned.map(item => `<article class="item"><div class="item-head"><div class="item-title"><strong>${esc(item.title || item.chat_id)}</strong><span>${esc(item.chat_id)}</span></div><div class="item-actions"><button onclick="editTelegramGroup('${item.chat_id}', 'owned')">Редактировать</button><button class="danger" onclick="deleteItem('telegram-group', '${item.chat_id}')">Удалить</button></div></div><div class="meta">${esc(item.notes || "")}</div></article>`).join("") || `<div class="empty">Пока нет групп для рекламы</div>`;
+      watchList.innerHTML = watched.map(item => `<article class="item"><div class="item-head"><div class="item-title"><strong>${esc(item.title || item.chat_id)}</strong><span>${item.target_chat_id ? "Переслать в: " + esc(item.target_chat_id) : "Не пересылать, ответить в этой же группе"}</span></div><div class="item-actions"><button onclick="editTelegramGroup('${item.chat_id}', 'watch')">Редактировать</button><button class="danger" onclick="deleteItem('telegram-group', '${item.chat_id}')">Удалить</button></div></div><div>${String(item.keywords || "").split(",").filter(Boolean).map(word => `<span class="tag">${esc(word.trim())}</span>`).join("")}</div><div class="meta">Материал: ${esc(item.response_message_id || "не выбран")}</div><div class="meta">${esc(item.notes || "")}</div></article>`).join("") || `<div class="empty">Пока нет групп для поиска</div>`;
+      hitsList.innerHTML = (state.hits || []).map(item => `<article class="item"><strong>${esc(item.keyword)}</strong><div class="meta">${fmt(item.created_at)} · ${esc(item.username || "")}</div><p>${esc(item.message || "")}</p></article>`).join("") || `<div class="empty">Совпадений пока нет</div>`;
+    }
+    requireAdminAccess(loadState);
+  </script>
+</body>
+</html>"""
+
+
+FACEBOOK_ADS_HTML = r"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Реклама Facebook</title>
+  <style>""" + APPROVED_MARKETING_STYLE + r"""</style>
+</head>
+<body class="locked">
+  <header><h1>Реклама Facebook</h1><nav><a href="/server">Задания</a><a href="/users">Сотрудники</a><a href="/clients">Клиенты</a><a href="/completed">Выполненные задания</a><a href="/calculations">Расчеты сотрудников</a><a href="/client-calculations">Расчеты клиентов</a><a href="/telegram-ads">Реклама Telegram</a><a href="/facebook-ads">Реклама Facebook</a><a href="/settings">Настройки</a></nav></header>
+  <main>
+    <div class="topbar"><div><h1>Реклама Facebook</h1><p>Группы, материалы, расписание и журнал. Проверку Page Access Token сделаем через Meta.</p></div><div class="status-row"><span class="pill blue" id="targetCount">0 групп</span><span class="pill green" id="messageCount">0 материалов</span><span class="pill amber" id="scheduleCount">0 расписаний</span></div></div>
+    <div class="content"><div>
+      <section class="section"><div class="section-header"><div><h2>Facebook-группы</h2><p>Группы или страницы для планирования рекламы и поиска по ключевым словам.</p></div></div><div class="section-body"><form class="form-grid" onsubmit="saveFacebookTarget(event)"><input id="fbTargetId" type="hidden"><label>Название<input id="fbTargetName" required></label><label>ID или ссылка<input id="fbTargetLink"></label><label>Действие при совпадении<select id="fbAction"><option value="same_group">Не пересылать, ответить в этой же группе</option><option value="manual">Только записать в журнал</option></select></label><label>Материал для комментария<select id="fbMaterial"></select></label><label class="full">Ключевые слова<input id="fbKeywords" placeholder="работа, квартира, продажа"></label><label class="full">Заметки<textarea id="fbNotes"></textarea></label><label class="full"><input id="fbEnabled" type="checkbox" checked> Группа включена</label><div class="form-actions full"><button class="primary">Сохранить группу</button></div></form><div class="items" id="targetsList"></div></div></section>
+      <section class="section" id="messagePanel"><div class="section-header"><div><h2>Рекламный материал</h2><p>Отдельный рекламный текст и картинка с компьютера.</p></div></div><div class="section-body"><form class="form-grid" onsubmit="saveMessage(event)"><input id="messageId" type="hidden"><label>Название материала<input id="messageTitle" required></label><label>Аудитория<select id="messageAudience"><option value="all">Все</option><option value="clients">Клиенты</option><option value="workers">Мастера</option></select></label><label class="full">Текст рекламы<textarea id="messageBody" required></textarea></label><label>Ссылка на картинку<input id="messageImageUrl"></label><label>Картинка с компьютера<input id="messageImageFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif"></label><label class="full"><input id="messageEnabled" type="checkbox" checked> Материал включен</label><div class="form-actions full"><button class="primary">Сохранить рекламный материал</button></div></form><div class="items" id="messagesList"></div></div></section>
+      <section class="section"><div class="section-header"><div><h2>Расписание рекламы</h2><p>Выберите Facebook-группу, материал и время публикации.</p></div></div><div class="section-body"><form class="form-grid" onsubmit="saveSchedule(event)"><input id="scheduleId" type="hidden"><label>Группа<select id="scheduleTarget"></select></label><label>Материал<select id="scheduleMessage"></select></label><label>Время<input id="scheduleTime" type="time" value="10:00" required></label><label><input id="scheduleEnabled" type="checkbox" checked> Расписание включено</label><div class="form-actions full"><button class="primary">Сохранить расписание</button></div></form><div class="items" id="schedulesList"></div></div></section>
+    </div><aside><section class="section"><div class="section-header"><div><h2>Журнал Facebook</h2><p>Последние действия.</p></div><button class="danger" onclick="clearLogs()">Очистка журнала</button></div><div class="section-body"><div class="items" id="logs"></div></div></section></aside></div>
+    <div class="send-now"><div><strong>Отправить сейчас</strong><span>Ручная подготовка выбранного рекламного материала.</span></div><div><select id="sendTarget"></select><select id="sendMessage"></select><button onclick="sendNow()">Отправить сейчас</button></div></div>
+  </main>
+  <script>const platform = "facebook";""" + APPROVED_MARKETING_SCRIPT + r"""
+    function render() {
+      renderCommonSelects(); renderMessages(); renderSchedules(); renderLogs();
+      const targets = state.targets || [];
+      targetCount.textContent = `${targets.length} групп`; messageCount.textContent = `${(state.messages || []).length} материалов`; scheduleCount.textContent = `${(state.schedules || []).length} расписаний`;
+      targetsList.innerHTML = targets.map(item => `<article class="item ${item.enabled ? "" : "off"}"><div class="item-head"><div class="item-title"><strong>${esc(item.name)}</strong><span>${esc(item.target_id || "")}</span></div><div class="item-actions"><button onclick="editFacebookTarget(${item.id})">Редактировать</button><button class="danger" onclick="deleteItem('facebook-target', ${item.id})">Удалить</button></div></div><div>${String(item.keywords || "").split(",").filter(Boolean).map(word => `<span class="tag">${esc(word.trim())}</span>`).join("")}</div><div class="meta">Материал: ${esc(item.response_message_id || "не выбран")} · действие: ${esc(item.action || "same_group")}</div><div class="meta">${esc(item.notes || "")}</div></article>`).join("") || `<div class="empty">Пока нет Facebook-групп</div>`;
+    }
+    requireAdminAccess(loadState);
   </script>
 </body>
 </html>"""

@@ -168,6 +168,20 @@ def init_db() -> None:
             );
             """
         )
+        ensure_column(conn, "telegram_groups", "watch_enabled", "integer default 0")
+        ensure_column(conn, "telegram_groups", "target_chat_id", "text default ''")
+        ensure_column(conn, "telegram_groups", "response_message_id", "integer")
+        ensure_column(conn, "telegram_groups", "notes", "text default ''")
+        ensure_column(conn, "marketing_schedules", "target_id", "text default ''")
+        ensure_column(conn, "facebook_targets", "keywords", "text default ''")
+        ensure_column(conn, "facebook_targets", "action", "text default 'same_group'")
+        ensure_column(conn, "facebook_targets", "response_message_id", "integer")
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
+    if column not in columns:
+        conn.execute(f"alter table {table} add column {column} {definition}")
 
 
 def http_json(url: str, payload: dict[str, Any] | None = None) -> Any:
@@ -188,37 +202,37 @@ def telegram_api(method: str, payload: dict[str, Any] | None = None) -> Any:
     return http_json(url, payload)
 
 
-def send_telegram(chat_id: int, text: str) -> bool:
+def send_telegram(chat_id: int, text: str, reply_to_message_id: int | None = None) -> bool:
+    payload = {
+        "chat_id": chat_id,
+        "text": text,
+        "disable_web_page_preview": False,
+    }
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
     try:
-        telegram_api(
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": text,
-                "disable_web_page_preview": False,
-            },
-        )
+        telegram_api("sendMessage", payload)
         return True
     except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
         print(f"telegram send failed for {chat_id}: {exc}")
         return False
 
 
-def send_telegram_ad(chat_id: int, text: str, image_url: str = "") -> bool:
+def send_telegram_ad(chat_id: int, text: str, image_url: str = "", reply_to_message_id: int | None = None) -> bool:
     if image_url:
+        payload = {
+            "chat_id": chat_id,
+            "photo": image_url,
+            "caption": text[:1024],
+        }
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
         try:
-            telegram_api(
-                "sendPhoto",
-                {
-                    "chat_id": chat_id,
-                    "photo": image_url,
-                    "caption": text[:1024],
-                },
-            )
+            telegram_api("sendPhoto", payload)
             return True
         except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
             print(f"telegram photo failed for {chat_id}: {exc}")
-    return send_telegram(chat_id, text)
+    return send_telegram(chat_id, text, reply_to_message_id)
 
 
 def log_marketing(platform: str, target_type: str, target_id: str, city: str, action: str, status: str, detail: str = "") -> None:
@@ -288,12 +302,13 @@ def save_group(message: dict[str, Any], city: str = "", keywords: str = "") -> N
     with db() as conn:
         conn.execute(
             """
-            insert into telegram_groups(chat_id, title, city, keywords, created_at)
-            values(?, ?, ?, ?, ?)
+            insert into telegram_groups(chat_id, title, city, keywords, watch_enabled, created_at)
+            values(?, ?, ?, ?, 1, ?)
             on conflict(chat_id) do update set
               title = excluded.title,
               city = coalesce(nullif(excluded.city, ''), telegram_groups.city),
               keywords = coalesce(nullif(excluded.keywords, ''), telegram_groups.keywords),
+              watch_enabled = 1,
               enabled = 1
             """,
             (
@@ -306,15 +321,34 @@ def save_group(message: dict[str, Any], city: str = "", keywords: str = "") -> N
         )
 
 
-def group_keywords(chat_id: int) -> list[str]:
+def group_watch_config(chat_id: int) -> sqlite3.Row | None:
     with db() as conn:
         row = conn.execute(
-            "select keywords from telegram_groups where chat_id = ? and enabled = 1",
+            """
+            select chat_id, title, keywords, target_chat_id, response_message_id
+            from telegram_groups
+            where chat_id = ? and watch_enabled = 1
+            """,
             (chat_id,),
         ).fetchone()
+    return row
+
+
+def group_keywords(chat_id: int) -> list[str]:
+    row = group_watch_config(chat_id)
     if not row or not row["keywords"]:
         return []
     return [item.strip().lower() for item in row["keywords"].split(",") if item.strip()]
+
+
+def marketing_message(message_id: int | None, platform: str = "telegram") -> sqlite3.Row | None:
+    if not message_id:
+        return None
+    with db() as conn:
+        return conn.execute(
+            "select body, image_url, title from marketing_messages where id = ? and platform = ? and enabled = 1",
+            (message_id, platform),
+        ).fetchone()
 
 
 def can_reply_to_keyword(chat_id: int, keyword: str) -> bool:
@@ -372,9 +406,14 @@ def broadcast_subscribers(role: str, text: str) -> tuple[int, int]:
     return sent, len(rows)
 
 
-def post_to_groups(text: str, image_url: str = "", city: str = "") -> tuple[int, int]:
+def post_to_groups(text: str, image_url: str = "", city: str = "", target_id: str = "") -> tuple[int, int]:
     with db() as conn:
-        if city:
+        if target_id:
+            rows = conn.execute(
+                "select chat_id, title, city from telegram_groups where enabled = 1 and chat_id = ?",
+                (int(target_id),),
+            ).fetchall()
+        elif city:
             rows = conn.execute(
                 "select chat_id, title, city from telegram_groups where enabled = 1 and lower(city) = lower(?)",
                 (city,),
@@ -416,7 +455,7 @@ def due_schedules(platform: str = "telegram") -> list[sqlite3.Row]:
 def run_due_schedules() -> None:
     today = time.strftime("%Y-%m-%d", time.localtime())
     for schedule in due_schedules("telegram"):
-        sent, total = post_to_groups(schedule["body"], schedule["image_url"] or "", schedule["city"] or "")
+        sent, total = post_to_groups(schedule["body"], schedule["image_url"] or "", schedule["city"] or "", schedule["target_id"] or "")
         with db() as conn:
             conn.execute(
                 "update marketing_schedules set last_sent_date = ? where id = ?",
@@ -567,6 +606,7 @@ def handle_group_message(message: dict[str, Any]) -> None:
         )
         return
 
+    config = group_watch_config(chat_id)
     keywords = group_keywords(chat_id)
     if not keywords:
         return
@@ -574,7 +614,13 @@ def handle_group_message(message: dict[str, Any]) -> None:
         if keyword in lower:
             record_keyword_hit(message, keyword)
             if can_reply_to_keyword(chat_id, keyword):
-                send_telegram(chat_id, GROUP_TEXT)
+                response = marketing_message(config["response_message_id"] if config else None)
+                reply_chat_id = int(config["target_chat_id"]) if config and config["target_chat_id"] else chat_id
+                reply_to = message.get("message_id") if reply_chat_id == chat_id else None
+                if response:
+                    send_telegram_ad(reply_chat_id, response["body"], response["image_url"] or "", reply_to)
+                else:
+                    send_telegram(reply_chat_id, GROUP_TEXT, reply_to)
             return
 
 
