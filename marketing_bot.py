@@ -614,7 +614,10 @@ def handle_group_message(message: dict[str, Any]) -> None:
         if keyword in lower:
             record_keyword_hit(message, keyword)
             if can_reply_to_keyword(chat_id, keyword):
-                response = marketing_message(config["response_message_id"] if config else None)
+                response_id = config["response_message_id"] if config else None
+                if response_id == 0:
+                    return
+                response = marketing_message(response_id)
                 reply_chat_id = int(config["target_chat_id"]) if config and config["target_chat_id"] else chat_id
                 reply_to = message.get("message_id") if reply_chat_id == chat_id else None
                 if response:
@@ -671,6 +674,36 @@ def facebook_send(psid: str, text: str) -> bool:
         return False
 
 
+def facebook_send_image(psid: str, image_url: str) -> bool:
+    if not FACEBOOK_PAGE_ACCESS_TOKEN or not image_url:
+        return False
+    url = "https://graph.facebook.com/v20.0/me/messages?" + urllib.parse.urlencode(
+        {"access_token": FACEBOOK_PAGE_ACCESS_TOKEN}
+    )
+    payload = {
+        "recipient": {"id": psid},
+        "message": {
+            "attachment": {
+                "type": "image",
+                "payload": {"url": image_url, "is_reusable": True},
+            }
+        },
+    }
+    try:
+        http_json(url, payload)
+        return True
+    except Exception as exc:
+        print(f"facebook image send failed for {psid}: {exc}")
+        return False
+
+
+def facebook_send_ad(psid: str, text: str, image_url: str = "") -> bool:
+    ok = facebook_send(psid, text)
+    if image_url:
+        facebook_send_image(psid, image_url)
+    return ok
+
+
 def handle_facebook_event(event: dict[str, Any]) -> None:
     sender = event.get("sender", {}).get("id")
     message_text = (event.get("message", {}).get("text") or "").strip().lower()
@@ -685,6 +718,33 @@ def handle_facebook_event(event: dict[str, Any]) -> None:
             """,
             (sender, int(time.time())),
         )
+        targets = conn.execute(
+            """
+            select id, name, keywords, action, response_message_id
+            from facebook_targets
+            where enabled = 1 and coalesce(keywords, '') != ''
+            order by name
+            """
+        ).fetchall()
+    for target in targets:
+        keywords = [item.strip().lower() for item in (target["keywords"] or "").split(",") if item.strip()]
+        for keyword in keywords:
+            if keyword in message_text:
+                log_marketing(
+                    "facebook",
+                    "target",
+                    str(target["id"]),
+                    "",
+                    "keyword_hit",
+                    "matched",
+                    f"{keyword}: {message_text[:900]}",
+                )
+                if target["action"] == "manual" or target["response_message_id"] == 0:
+                    return
+                response = marketing_message(target["response_message_id"], "facebook")
+                if response:
+                    facebook_send_ad(sender, response["body"], response["image_url"] or "")
+                return
     if "мастер" in message_text or "master" in message_text:
         facebook_send(sender, WORKER_TEXT)
     else:
