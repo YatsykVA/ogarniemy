@@ -38,17 +38,20 @@ except ImportError:
 
 
 DB_PATH = os.environ.get("MARKETING_BOT_DB", "marketing_bot.db")
+CONFIG_PATH = os.environ.get("MARKETING_BOT_CONFIG", "marketing_bot_config.json")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_USERBOT_ENABLED = os.environ.get("TELEGRAM_USERBOT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
 TELEGRAM_API_ID = os.environ.get("TELEGRAM_API_ID", "")
 TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
 TELEGRAM_USER_SESSION = os.environ.get("TELEGRAM_USER_SESSION", "")
 TELEGRAM_USER_PHONE = os.environ.get("TELEGRAM_USER_PHONE", "")
+TELEGRAM_USER_SESSION_STRING = os.environ.get("TELEGRAM_SESSION_STRING", "")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.environ.get("FACEBOOK_PAGE_ACCESS_TOKEN", "")
 FACEBOOK_VERIFY_TOKEN = os.environ.get("FACEBOOK_VERIFY_TOKEN", "ogarniemy-verify")
 PRESENTATION_URL = os.environ.get("PRESENTATION_URL", "https://ogarniemy.pro")
 KEYWORD_REPLY_COOLDOWN = int(os.environ.get("KEYWORD_REPLY_COOLDOWN", "21600"))
 MARKETING_TIMEZONE = os.environ.get("MARKETING_TIMEZONE", "Europe/Warsaw")
+PENDING_TELEGRAM_LOGINS: dict[str, dict[str, Any]] = {}
 
 
 CLIENT_TEXT = (
@@ -74,6 +77,66 @@ def admin_ids() -> set[int]:
         if part.isdigit():
             result.add(int(part))
     return result
+
+
+def config_path() -> str:
+    if os.path.isabs(CONFIG_PATH):
+        return CONFIG_PATH
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), CONFIG_PATH)
+
+
+def read_config() -> dict[str, str]:
+    path = config_path()
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_config(values: dict[str, str]) -> None:
+    current = read_config()
+    current.update({key: str(value) for key, value in values.items() if value is not None})
+    with open(config_path(), "w", encoding="utf-8") as file:
+        json.dump(current, file, ensure_ascii=False, indent=2)
+    write_db_config(values)
+
+
+def read_db_config() -> dict[str, str]:
+    try:
+        with db() as conn:
+            rows = conn.execute("select key, value from app_config").fetchall()
+    except sqlite3.Error:
+        return {}
+    return {str(row["key"]): str(row["value"]) for row in rows}
+
+
+def write_db_config(values: dict[str, str]) -> None:
+    try:
+        with db() as conn:
+            conn.execute("create table if not exists app_config (key text primary key, value text not null)")
+            for key, value in values.items():
+                if value is not None:
+                    conn.execute(
+                        "insert into app_config(key, value) values(?, ?) on conflict(key) do update set value = excluded.value",
+                        (str(key), str(value)),
+                    )
+    except sqlite3.Error:
+        return
+
+
+def telegram_config() -> dict[str, str]:
+    config = {**read_db_config(), **read_config()}
+    return {
+        "api_id": TELEGRAM_API_ID or config.get("telegram_api_id", ""),
+        "api_hash": TELEGRAM_API_HASH or config.get("telegram_api_hash", ""),
+        "session": TELEGRAM_USER_SESSION or config.get("telegram_session", "ogarniemy_userbot"),
+        "session_string": TELEGRAM_USER_SESSION_STRING or config.get("telegram_session_string", ""),
+        "phone": TELEGRAM_USER_PHONE or config.get("telegram_phone", ""),
+    }
 
 
 def db() -> sqlite3.Connection:
@@ -213,6 +276,113 @@ def http_json(url: str, payload: dict[str, Any] | None = None) -> Any:
     with urllib.request.urlopen(req, timeout=30) as res:
         body = res.read().decode("utf-8")
         return json.loads(body) if body else {}
+
+
+def telegram_session_value(session: str = "", session_string: str = "") -> Any:
+    if session_string:
+        if StringSession is None:
+            raise RuntimeError("Install Telethon first: python -m pip install telethon")
+        return StringSession(session_string)
+    return session or telegram_config()["session"]
+
+
+async def async_start_telegram_login(api_id: str, api_hash: str, phone: str, session: str = "") -> dict[str, Any]:
+    if TelegramClient is None:
+        raise RuntimeError("Install Telethon first: python -m pip install telethon")
+    clean_api_id = str(api_id).strip()
+    clean_api_hash = str(api_hash).strip()
+    clean_phone = str(phone).strip()
+    clean_session = str(session or "ogarniemy_userbot").strip()
+    if not clean_api_id or not clean_api_hash or not clean_phone:
+        raise RuntimeError("api_id, api_hash and phone are required.")
+    login_id = os.urandom(12).hex()
+    client = TelegramClient(telegram_session_value("", ""), int(clean_api_id), clean_api_hash)
+    await client.connect()
+    try:
+        sent = await client.send_code_request(clean_phone)
+        pending_session_string = client.session.save()
+    finally:
+        await client.disconnect()
+    PENDING_TELEGRAM_LOGINS[login_id] = {
+        "api_id": clean_api_id,
+        "api_hash": clean_api_hash,
+        "phone": clean_phone,
+        "session": clean_session,
+        "session_string": pending_session_string,
+        "phone_code_hash": sent.phone_code_hash,
+        "created_at": int(time.time()),
+    }
+    return {"loginId": login_id, "phone": clean_phone}
+
+
+def start_telegram_login(api_id: str, api_hash: str, phone: str, session: str = "") -> dict[str, Any]:
+    return asyncio.run(async_start_telegram_login(api_id, api_hash, phone, session))
+
+
+async def async_complete_telegram_login(login_id: str, code: str, password: str = "") -> dict[str, Any]:
+    if TelegramClient is None:
+        raise RuntimeError("Install Telethon first: python -m pip install telethon")
+    try:
+        from telethon.errors import SessionPasswordNeededError
+    except ImportError as exc:
+        raise RuntimeError("Install Telethon first: python -m pip install telethon") from exc
+    pending = PENDING_TELEGRAM_LOGINS.get(str(login_id))
+    if not pending:
+        raise RuntimeError("Login request expired. Send the code again.")
+    client = TelegramClient(telegram_session_value("", pending.get("session_string", "")), int(pending["api_id"]), pending["api_hash"])
+    await client.connect()
+    try:
+        try:
+            await client.sign_in(
+                phone=pending["phone"],
+                code=str(code).strip(),
+                phone_code_hash=pending["phone_code_hash"],
+            )
+        except SessionPasswordNeededError:
+            if not password:
+                return {"ok": False, "passwordRequired": True}
+            await client.sign_in(password=str(password))
+        me = await client.get_me()
+        session_string = client.session.save()
+    finally:
+        await client.disconnect()
+    write_config(
+        {
+            "telegram_api_id": pending["api_id"],
+            "telegram_api_hash": pending["api_hash"],
+            "telegram_session": pending["session"],
+            "telegram_session_string": session_string,
+            "telegram_phone": pending["phone"],
+        }
+    )
+    PENDING_TELEGRAM_LOGINS.pop(str(login_id), None)
+    return {
+        "ok": True,
+        "user": {
+            "id": getattr(me, "id", ""),
+            "username": getattr(me, "username", "") or "",
+            "firstName": getattr(me, "first_name", "") or "",
+            "lastName": getattr(me, "last_name", "") or "",
+        },
+    }
+
+
+def complete_telegram_login(login_id: str, code: str, password: str = "") -> dict[str, Any]:
+    return asyncio.run(async_complete_telegram_login(login_id, code, password))
+
+
+def telegram_login_status() -> dict[str, Any]:
+    config = telegram_config()
+    session = config["session"]
+    session_path = session if os.path.isabs(session) else os.path.join(os.path.dirname(os.path.abspath(__file__)), session)
+    if not session_path.endswith(".session"):
+        session_path += ".session"
+    return {
+        "configured": bool(config["api_id"] and config["api_hash"]),
+        "session": session,
+        "sessionExists": bool(config.get("session_string")) or os.path.exists(session_path),
+        "phone": config.get("phone", ""),
+    }
 
 
 def telegram_api(method: str, payload: dict[str, Any] | None = None) -> Any:

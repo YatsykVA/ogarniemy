@@ -681,6 +681,9 @@ class App(BaseHTTPRequestHandler):
         if path == "/facebook-ads":
             self.send_html(FACEBOOK_ADS_HTML)
             return
+        if path == "/telegram-login":
+            self.send_html(TELEGRAM_LOGIN_HTML)
+            return
         if path == "/api/tasks":
             self.handle_tasks()
             return
@@ -729,6 +732,9 @@ class App(BaseHTTPRequestHandler):
         if path == "/api/admin/marketing/facebook":
             self.handle_marketing_state("facebook")
             return
+        if path == "/api/admin/telegram-login/status":
+            self.handle_telegram_login_status()
+            return
         if path.startswith("/api/admin/users/") and path.endswith("/report"):
             self.handle_user_report(path)
             return
@@ -768,6 +774,12 @@ class App(BaseHTTPRequestHandler):
             return
         if path.startswith("/api/admin/marketing/"):
             self.handle_marketing_post(path)
+            return
+        if path == "/api/admin/telegram-login/start":
+            self.handle_telegram_login_start()
+            return
+        if path == "/api/admin/telegram-login/complete":
+            self.handle_telegram_login_complete()
             return
         if path == "/api/me/reserve":
             self.handle_my_reserve()
@@ -3395,6 +3407,47 @@ class App(BaseHTTPRequestHandler):
             for event in entry.get("messaging", []):
                 marketing.handle_facebook_event(event)
         self.send_plain("ok")
+
+    def handle_telegram_login_status(self):
+        if not self.is_admin():
+            self.send_json({"error": "admin_unauthorized"}, 401)
+            return
+        self.send_json(self.marketing().telegram_login_status())
+
+    def handle_telegram_login_start(self):
+        if not self.is_admin():
+            self.send_json({"error": "admin_unauthorized"}, 401)
+            return
+        data = self.read_json()
+        try:
+            result = self.marketing().start_telegram_login(
+                str(data.get("apiId", "")).strip(),
+                str(data.get("apiHash", "")).strip(),
+                str(data.get("phone", "")).strip(),
+                str(data.get("session", "")).strip(),
+            )
+        except Exception as exc:
+            self.send_json({"error": "telegram_login_failed", "detail": str(exc)}, 400)
+            return
+        self.send_json({"ok": True, **result})
+
+    def handle_telegram_login_complete(self):
+        if not self.is_admin():
+            self.send_json({"error": "admin_unauthorized"}, 401)
+            return
+        data = self.read_json()
+        try:
+            result = self.marketing().complete_telegram_login(
+                str(data.get("loginId", "")).strip(),
+                str(data.get("code", "")).strip(),
+                str(data.get("password", "")),
+            )
+        except Exception as exc:
+            self.send_json({"error": "telegram_code_failed", "detail": str(exc)}, 400)
+            return
+        if result.get("ok"):
+            start_marketing_bot_worker()
+        self.send_json(result)
 
     def handle_marketing_state(self, platform):
         if not self.is_admin():
@@ -7865,7 +7918,7 @@ TELEGRAM_ADS_HTML = r"""<!doctype html>
   <style>""" + APPROVED_MARKETING_STYLE + r"""</style>
 </head>
 <body class="locked">
-  <header><h1>Реклама Telegram</h1><nav><a href="/server">Задания</a><a href="/users">Сотрудники</a><a href="/clients">Клиенты</a><a href="/completed">Выполненные задания</a><a href="/calculations">Расчеты сотрудников</a><a href="/client-calculations">Расчеты клиентов</a><a href="/telegram-ads">Реклама Telegram</a><a href="/facebook-ads">Реклама Facebook</a><a href="/settings">Настройки</a></nav></header>
+  <header><h1>Реклама Telegram</h1><nav><a href="/server">Задания</a><a href="/users">Сотрудники</a><a href="/clients">Клиенты</a><a href="/completed">Выполненные задания</a><a href="/calculations">Расчеты сотрудников</a><a href="/client-calculations">Расчеты клиентов</a><a href="/telegram-ads">Реклама Telegram</a><a href="/facebook-ads">Реклама Facebook</a><a href="/telegram-login">Настройки бота</a><a href="/settings">Настройки</a></nav></header>
   <main>
     <div class="topbar"><div><h1>Реклама Telegram</h1><p>Группы для рекламы, группы для поиска объявлений, материалы, расписание и журнал.</p></div><div class="status-row"><span class="pill blue" id="ownedCount">0 рекламных групп</span><span class="pill green" id="watchCount">0 групп поиска</span><span class="pill amber" id="scheduleCount">0 расписаний</span></div></div>
     <div class="content"><div>
@@ -7902,7 +7955,7 @@ FACEBOOK_ADS_HTML = r"""<!doctype html>
   <style>""" + APPROVED_MARKETING_STYLE + r"""</style>
 </head>
 <body class="locked">
-  <header><h1>Реклама Facebook</h1><nav><a href="/server">Задания</a><a href="/users">Сотрудники</a><a href="/clients">Клиенты</a><a href="/completed">Выполненные задания</a><a href="/calculations">Расчеты сотрудников</a><a href="/client-calculations">Расчеты клиентов</a><a href="/telegram-ads">Реклама Telegram</a><a href="/facebook-ads">Реклама Facebook</a><a href="/settings">Настройки</a></nav></header>
+  <header><h1>Реклама Facebook</h1><nav><a href="/server">Задания</a><a href="/users">Сотрудники</a><a href="/clients">Клиенты</a><a href="/completed">Выполненные задания</a><a href="/calculations">Расчеты сотрудников</a><a href="/client-calculations">Расчеты клиентов</a><a href="/telegram-ads">Реклама Telegram</a><a href="/facebook-ads">Реклама Facebook</a><a href="/telegram-login">Настройки бота</a><a href="/settings">Настройки</a></nav></header>
   <main>
     <div class="topbar"><div><h1>Реклама Facebook</h1><p>Группы, материалы, расписание и журнал. Проверку Page Access Token сделаем через Meta.</p></div><div class="status-row"><span class="pill blue" id="targetCount">0 групп</span><span class="pill green" id="messageCount">0 материалов</span><span class="pill amber" id="scheduleCount">0 расписаний</span></div></div>
     <div class="content"><div>
@@ -7921,6 +7974,149 @@ FACEBOOK_ADS_HTML = r"""<!doctype html>
       hitsList.innerHTML = (state.hits || []).map(item => `<article class="item"><strong>${esc(item.group_chat_id || "")}</strong><div class="meta">${fmt(item.created_at)}</div><p>${esc(item.message || "")}</p></article>`).join("") || `<div class="empty">Совпадений пока нет</div>`;
     }
     requireAdminAccess(loadState);
+  </script>
+</body>
+</html>"""
+
+
+TELEGRAM_LOGIN_HTML = r"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Настройки бота</title>
+  <style>
+    :root { --ink:#172026; --muted:#5f6b7a; --line:#d7dde6; --gold:#f6c85f; --blue:#163b66; --green:#1f8a70; --red:#b42318; --panel:#ffffff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; color: var(--ink); background: linear-gradient(180deg, #eef3f7 0%, #f8fafc 45%, #ffffff 100%); }
+    body.locked header, body.locked main { display: none; }
+    header { background: linear-gradient(135deg, #163b66 0%, #1f8a70 100%); color: white; padding: 24px 28px 26px; box-shadow: 0 14px 34px rgba(22, 59, 102, 0.18); }
+    h1 { margin: 0 0 14px; font-size: 28px; line-height: 1.15; letter-spacing: 0; }
+    nav { display: grid; grid-template-columns: repeat(10, minmax(104px, 1fr)); gap: 8px; align-items: stretch; }
+    nav a { display: flex; align-items: center; justify-content: center; min-height: 40px; padding: 8px 10px; border-radius: 8px; background: var(--gold); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; line-height: 1.15; text-align: center; box-shadow: 0 6px 14px rgba(23, 32, 38, 0.12); }
+    main { max-width: 920px; margin: 0 auto; padding: 24px; }
+    section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 10px 24px rgba(23, 32, 38, 0.06); }
+    h2 { margin: 0 0 12px; font-size: 18px; line-height: 1.25; }
+    label { display: grid; gap: 6px; font-size: 14px; font-weight: 700; margin-bottom: 12px; }
+    input { width: 100%; border: 1px solid #c8d1dd; border-radius: 7px; padding: 11px 12px; font: inherit; background: #fff; color: var(--ink); }
+    button { border: 0; border-radius: 7px; min-height: 42px; padding: 10px 16px; font: inherit; font-weight: 700; cursor: pointer; background: var(--gold); color: var(--ink); box-shadow: 0 6px 14px rgba(23, 32, 38, 0.12); }
+    button.secondary { background: #e8eef5; color: var(--blue); }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .status { border-left: 4px solid var(--blue); background: #eef5fb; padding: 12px; border-radius: 7px; margin-bottom: 14px; line-height: 1.45; }
+    .error { border-left-color: var(--red); background: #fff1f0; color: #8a1f16; }
+    .ok { border-left-color: var(--green); background: #edf8f4; color: #14634f; }
+    .muted { color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .hidden { display: none; }
+    @media (max-width: 1180px) { nav { grid-template-columns: repeat(5, minmax(120px, 1fr)); } }
+    @media (max-width: 680px) { header { padding: 20px 16px; } h1 { font-size: 24px; } nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } nav a { min-height: 42px; font-size: 12px; } .row { grid-template-columns: 1fr; } main { padding: 16px; } }
+  </style>
+</head>
+<body class="locked">
+  <header>
+    <h1>Настройки бота</h1>
+    <nav><a href="/server">Задания</a><a href="/users">Сотрудники</a><a href="/clients">Клиенты</a><a href="/completed">Выполненные задания</a><a href="/calculations">Расчеты сотрудников</a><a href="/client-calculations">Расчеты клиентов</a><a href="/telegram-ads">Реклама Telegram</a><a href="/facebook-ads">Реклама Facebook</a><a href="/telegram-login">Настройки бота</a><a href="/settings">Настройки</a></nav>
+  </header>
+  <main>
+    <section>
+      <h2>Состояние Telegram-бота</h2>
+      <div id="status" class="status">Проверяю подключение Telegram.</div>
+      <button class="secondary" onclick="loadStatus()">Обновить состояние</button>
+    </section>
+    <section>
+      <h2>1. Отправить код</h2>
+      <div class="row">
+        <label>API ID<input id="apiId" inputmode="numeric" placeholder="123456"></label>
+        <label>API Hash<input id="apiHash" placeholder="abcdef123456..."></label>
+      </div>
+      <div class="row">
+        <label>Номер телефона Telegram<input id="phone" autocomplete="tel" placeholder="+48123456789"></label>
+        <label>Имя сессии<input id="sessionName" value="ogarniemy_userbot"></label>
+      </div>
+      <p class="muted">API ID и API Hash берутся на my.telegram.org в разделе API development tools. Код придет в Telegram.</p>
+      <button onclick="startLogin()">Отправить код</button>
+    </section>
+    <section id="codeSection" class="hidden">
+      <h2>2. Подтвердить вход</h2>
+      <label>Код из Telegram<input id="code" inputmode="numeric" autocomplete="one-time-code"></label>
+      <label>Облачный пароль Telegram, если включен<input id="tgPassword" type="password" autocomplete="current-password"></label>
+      <button onclick="completeLogin()">Сохранить личный аккаунт</button>
+    </section>
+  </main>
+  <script>
+    let loginId = "";
+    let adminPassword = sessionStorage.getItem("adminPassword") || "";
+    function adminHeaders(extra = {}) {
+      if (!adminPassword) {
+        adminPassword = prompt("Admin password") || "";
+        sessionStorage.setItem("adminPassword", adminPassword);
+      }
+      return { "X-Admin-Password": adminPassword, "Content-Type": "application/json", ...extra };
+    }
+    async function requireAdminAccess(start) {
+      while (true) {
+        if (!adminPassword) adminPassword = prompt("Admin password") || "";
+        if (!adminPassword) { document.body.innerHTML = ""; return; }
+        sessionStorage.setItem("adminPassword", adminPassword);
+        const res = await fetch("/api/admin/check-password", { headers: { "X-Admin-Password": adminPassword } });
+        if (res.ok) { document.body.classList.remove("locked"); start(); return; }
+        sessionStorage.removeItem("adminPassword"); adminPassword = "";
+      }
+    }
+    function setStatus(text, kind = "") {
+      status.className = "status " + kind;
+      status.textContent = text;
+    }
+    async function loadStatus() {
+      try {
+        const res = await fetch("/api/admin/telegram-login/status", { headers: adminHeaders() });
+        const data = await res.json();
+        if (!res.ok) return setStatus(data.detail || "Не удалось проверить Telegram-бота.", "error");
+        const sessionText = data.sessionExists ? "сессия сохранена" : "сессии пока нет";
+        const configText = data.configured ? "API настроен" : "API еще не настроен";
+        setStatus(`${configText}, ${sessionText}. Сессия: ${data.session || "ogarniemy_userbot"}${data.phone ? ", телефон: " + data.phone : ""}.`, data.sessionExists ? "ok" : "");
+        if (data.session) sessionName.value = data.session;
+        if (data.phone) phone.value = data.phone;
+      } catch (err) {
+        setStatus("Не удалось связаться с сервером Telegram-бота.", "error");
+      }
+    }
+    async function startLogin() {
+      if (!apiId.value.trim() || !apiHash.value.trim() || !phone.value.trim()) {
+        return setStatus("Введите API ID, API Hash и номер телефона.", "error");
+      }
+      setStatus("Отправляю код в Telegram...");
+      const res = await fetch("/api/admin/telegram-login/start", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({ apiId: apiId.value, apiHash: apiHash.value, phone: phone.value, session: sessionName.value || "ogarniemy_userbot" })
+      });
+      const data = await res.json();
+      if (!res.ok) return setStatus(data.detail || "Не удалось отправить код.", "error");
+      loginId = data.loginId;
+      codeSection.classList.remove("hidden");
+      code.focus();
+      setStatus(`Код отправлен на ${data.phone}. Введите его ниже.`, "ok");
+    }
+    async function completeLogin() {
+      if (!loginId) return setStatus("Сначала отправьте код.", "error");
+      setStatus("Проверяю код...");
+      const res = await fetch("/api/admin/telegram-login/complete", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({ loginId, code: code.value, password: tgPassword.value })
+      });
+      const data = await res.json();
+      if (data.passwordRequired) {
+        tgPassword.focus();
+        return setStatus("Telegram просит облачный пароль. Введите его и нажмите кнопку еще раз.", "error");
+      }
+      if (!res.ok || !data.ok) return setStatus(data.detail || "Не удалось подтвердить код.", "error");
+      const user = data.user || {};
+      setStatus(`Готово. Сессия сохранена для ${user.username ? "@" + user.username : user.id}.`, "ok");
+      codeSection.classList.add("hidden");
+      loadStatus();
+    }
+    requireAdminAccess(loadStatus);
   </script>
 </body>
 </html>"""
