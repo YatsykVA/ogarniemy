@@ -15,6 +15,7 @@ start the bot first. Group keyword replies are public and rate-limited.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sqlite3
@@ -22,16 +23,32 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    from telethon import TelegramClient, events
+    from telethon.sessions import StringSession
+except ImportError:
+    TelegramClient = None
+    StringSession = None
+    events = None
 
 
 DB_PATH = os.environ.get("MARKETING_BOT_DB", "marketing_bot.db")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_USERBOT_ENABLED = os.environ.get("TELEGRAM_USERBOT_ENABLED", "0").lower() in {"1", "true", "yes", "on"}
+TELEGRAM_API_ID = os.environ.get("TELEGRAM_API_ID", "")
+TELEGRAM_API_HASH = os.environ.get("TELEGRAM_API_HASH", "")
+TELEGRAM_USER_SESSION = os.environ.get("TELEGRAM_USER_SESSION", "")
+TELEGRAM_USER_PHONE = os.environ.get("TELEGRAM_USER_PHONE", "")
 FACEBOOK_PAGE_ACCESS_TOKEN = os.environ.get("FACEBOOK_PAGE_ACCESS_TOKEN", "")
 FACEBOOK_VERIFY_TOKEN = os.environ.get("FACEBOOK_VERIFY_TOKEN", "ogarniemy-verify")
 PRESENTATION_URL = os.environ.get("PRESENTATION_URL", "https://ogarniemy.pro")
 KEYWORD_REPLY_COOLDOWN = int(os.environ.get("KEYWORD_REPLY_COOLDOWN", "21600"))
+MARKETING_TIMEZONE = os.environ.get("MARKETING_TIMEZONE", "Europe/Warsaw")
 
 
 CLIENT_TEXT = (
@@ -173,9 +190,12 @@ def init_db() -> None:
         ensure_column(conn, "telegram_groups", "response_message_id", "integer")
         ensure_column(conn, "telegram_groups", "notes", "text default ''")
         ensure_column(conn, "marketing_schedules", "target_id", "text default ''")
+        ensure_column(conn, "marketing_schedules", "group_id", "text default ''")
         ensure_column(conn, "facebook_targets", "keywords", "text default ''")
         ensure_column(conn, "facebook_targets", "action", "text default 'same_group'")
         ensure_column(conn, "facebook_targets", "response_message_id", "integer")
+        ensure_column(conn, "facebook_targets", "forward_chat_id", "text default ''")
+        ensure_column(conn, "facebook_targets", "forward_facebook_target_id", "text default ''")
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -233,6 +253,31 @@ def send_telegram_ad(chat_id: int, text: str, image_url: str = "", reply_to_mess
         except (urllib.error.URLError, urllib.error.HTTPError, RuntimeError) as exc:
             print(f"telegram photo failed for {chat_id}: {exc}")
     return send_telegram(chat_id, text, reply_to_message_id)
+
+
+async def userbot_send_telegram(client: Any, chat_id: int, text: str, reply_to_message_id: int | None = None) -> bool:
+    try:
+        await client.send_message(chat_id, text, reply_to=reply_to_message_id)
+        return True
+    except Exception as exc:
+        print(f"userbot send failed for {chat_id}: {exc}")
+        return False
+
+
+async def userbot_send_telegram_ad(
+    client: Any,
+    chat_id: int,
+    text: str,
+    image_url: str = "",
+    reply_to_message_id: int | None = None,
+) -> bool:
+    if image_url:
+        try:
+            await client.send_file(chat_id, image_url, caption=text[:1024], reply_to=reply_to_message_id)
+            return True
+        except Exception as exc:
+            print(f"userbot photo failed for {chat_id}: {exc}")
+    return await userbot_send_telegram(client, chat_id, text, reply_to_message_id)
 
 
 def log_marketing(platform: str, target_type: str, target_id: str, city: str, action: str, status: str, detail: str = "") -> None:
@@ -374,6 +419,7 @@ def can_reply_to_keyword(chat_id: int, keyword: str) -> bool:
 def record_keyword_hit(message: dict[str, Any], keyword: str) -> None:
     chat = message.get("chat", {})
     user = message.get("from", {})
+    message_text = message.get("text") or message.get("caption") or ""
     with db() as conn:
         conn.execute(
             """
@@ -385,9 +431,26 @@ def record_keyword_hit(message: dict[str, Any], keyword: str) -> None:
                 keyword,
                 user.get("id"),
                 user.get("username", ""),
-                message.get("text", "")[:1000],
+                message_text[:1000],
                 int(time.time()),
             ),
+        )
+
+
+def record_keyword_hit_values(
+    group_chat_id: int,
+    keyword: str,
+    user_id: int | None,
+    username: str,
+    message_text: str,
+) -> None:
+    with db() as conn:
+        conn.execute(
+            """
+            insert into keyword_hits(group_chat_id, keyword, user_id, username, message, created_at)
+            values(?, ?, ?, ?, ?, ?)
+            """,
+            (group_chat_id, keyword, user_id, username, message_text[:1000], int(time.time())),
         )
 
 
@@ -404,6 +467,13 @@ def broadcast_subscribers(role: str, text: str) -> tuple[int, int]:
         rows = conn.execute(query, params).fetchall()
     sent = sum(1 for row in rows if send_telegram(int(row["chat_id"]), text))
     return sent, len(rows)
+
+
+def marketing_now() -> datetime:
+    try:
+        return datetime.now(ZoneInfo(MARKETING_TIMEZONE))
+    except ZoneInfoNotFoundError:
+        return datetime.now()
 
 
 def post_to_groups(text: str, image_url: str = "", city: str = "", target_id: str = "") -> tuple[int, int]:
@@ -431,10 +501,39 @@ def post_to_groups(text: str, image_url: str = "", city: str = "", target_id: st
     return sent, len(rows)
 
 
+def marketing_group_rows(target_id: str = "", city: str = "") -> list[sqlite3.Row]:
+    with db() as conn:
+        if target_id:
+            return conn.execute(
+                "select chat_id, title, city from telegram_groups where enabled = 1 and chat_id = ?",
+                (int(target_id),),
+            ).fetchall()
+        if city:
+            return conn.execute(
+                "select chat_id, title, city from telegram_groups where enabled = 1 and lower(city) = lower(?)",
+                (city,),
+            ).fetchall()
+        return conn.execute(
+            "select chat_id, title, city from telegram_groups where enabled = 1"
+        ).fetchall()
+
+
+async def userbot_post_to_groups(client: Any, text: str, image_url: str = "", city: str = "", target_id: str = "") -> tuple[int, int]:
+    rows = marketing_group_rows(target_id, city)
+    sent = 0
+    for row in rows:
+        ok = await userbot_send_telegram_ad(client, int(row["chat_id"]), text, image_url)
+        if ok:
+            sent += 1
+        log_marketing("telegram", "group", row["chat_id"], row["city"] or city, "post", "sent" if ok else "failed", row["title"] or "")
+        await asyncio.sleep(2)
+    return sent, len(rows)
+
+
 def due_schedules(platform: str = "telegram") -> list[sqlite3.Row]:
-    now = time.localtime()
-    current_time = time.strftime("%H:%M", now)
-    today = time.strftime("%Y-%m-%d", now)
+    now = marketing_now()
+    current_time = now.strftime("%H:%M")
+    today = now.strftime("%Y-%m-%d")
     with db() as conn:
         return conn.execute(
             """
@@ -444,7 +543,7 @@ def due_schedules(platform: str = "telegram") -> list[sqlite3.Row]:
             where schedules.platform = ?
               and schedules.enabled = 1
               and messages.enabled = 1
-              and schedules.send_time <= ?
+              and schedules.send_time = ?
               and coalesce(schedules.last_sent_date, '') != ?
             order by schedules.send_time, schedules.id
             """,
@@ -453,7 +552,7 @@ def due_schedules(platform: str = "telegram") -> list[sqlite3.Row]:
 
 
 def run_due_schedules() -> None:
-    today = time.strftime("%Y-%m-%d", time.localtime())
+    today = marketing_now().strftime("%Y-%m-%d")
     for schedule in due_schedules("telegram"):
         sent, total = post_to_groups(schedule["body"], schedule["image_url"] or "", schedule["city"] or "", schedule["target_id"] or "")
         with db() as conn:
@@ -589,7 +688,7 @@ def handle_private_message(message: dict[str, Any]) -> None:
 def handle_group_message(message: dict[str, Any]) -> None:
     chat_id = int(message["chat"]["id"])
     user_id = message.get("from", {}).get("id")
-    text = (message.get("text") or "").strip()
+    text = (message.get("text") or message.get("caption") or "").strip()
     lower = text.lower()
 
     if lower.startswith("/watch") and is_admin(user_id):
@@ -628,13 +727,18 @@ def handle_group_message(message: dict[str, Any]) -> None:
 
 
 def handle_telegram_update(update: dict[str, Any]) -> None:
-    message = update.get("message") or update.get("edited_message")
+    message = (
+        update.get("message")
+        or update.get("edited_message")
+        or update.get("channel_post")
+        or update.get("edited_channel_post")
+    )
     if not message or "chat" not in message:
         return
     chat_type = message["chat"].get("type")
     if chat_type == "private":
         handle_private_message(message)
-    elif chat_type in {"group", "supergroup"}:
+    elif chat_type in {"group", "supergroup", "channel"}:
         handle_group_message(message)
 
 
@@ -650,7 +754,11 @@ def run_telegram_polling() -> None:
                 last_schedule_check = time.time()
             data = telegram_api(
                 "getUpdates",
-                {"timeout": 30, "offset": offset, "allowed_updates": ["message", "edited_message"]},
+                {
+                    "timeout": 30,
+                    "offset": offset,
+                    "allowed_updates": ["message", "edited_message", "channel_post", "edited_channel_post"],
+                },
             )
             for update in data.get("result", []):
                 offset = max(offset, int(update["update_id"]) + 1)
@@ -720,7 +828,7 @@ def handle_facebook_event(event: dict[str, Any]) -> None:
         )
         targets = conn.execute(
             """
-            select id, name, keywords, action, response_message_id
+            select id, name, keywords, action, response_message_id, forward_chat_id, forward_facebook_target_id
             from facebook_targets
             where enabled = 1 and coalesce(keywords, '') != ''
             order by name
@@ -743,7 +851,32 @@ def handle_facebook_event(event: dict[str, Any]) -> None:
                     return
                 response = marketing_message(target["response_message_id"], "facebook")
                 if response:
-                    facebook_send_ad(sender, response["body"], response["image_url"] or "")
+                    if target["action"] == "forward_group":
+                        forward_chat_id = str(target["forward_chat_id"] or "").strip()
+                        if forward_chat_id:
+                            ok = send_telegram_ad(int(forward_chat_id), response["body"], response["image_url"] or "")
+                            log_marketing(
+                                "facebook",
+                                "target",
+                                str(target["id"]),
+                                "",
+                                "forward_group",
+                                "sent" if ok else "failed",
+                                f"{keyword}: {message_text[:900]}",
+                            )
+                    elif target["action"] == "forward_facebook_group":
+                        forward_target_id = str(target["forward_facebook_target_id"] or "").strip()
+                        log_marketing(
+                            "facebook",
+                            "target",
+                            forward_target_id or str(target["id"]),
+                            "",
+                            "forward_facebook_group",
+                            "prepared" if forward_target_id else "failed",
+                            f"{keyword}: {message_text[:900]}",
+                        )
+                    else:
+                        facebook_send_ad(sender, response["body"], response["image_url"] or "")
                 return
     if "мастер" in message_text or "master" in message_text:
         facebook_send(sender, WORKER_TEXT)
