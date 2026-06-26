@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ogarniemy.pro | мы все уладим</title>
+    <meta
+      name="description"
+      content="Презентация ogarniemy.pro: сервис для клиентов и сотрудников, который помогает быстро закрывать доставки, поручения, поездки, помощь на месте и срочные городские задачи."
+    >
+    <link rel="stylesheet" href="./styles.css?v=4">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#intro" aria-label="ogarniemy.pro">
+        <span class="brand-mark"><img src="./assets/client-app-icon.png" alt=""></span>
+        <span>ogarniemy.pro</span>
+      </a>
+
+      <nav class="top-nav" aria-label="Разделы презентации">
+        <a href="#intro">Идея</a>
+        <a href="#server">Задачи</a>
+        <a href="#client">Клиент</a>
+        <a href="#employee">Сотрудник</a>
+        <a href="#flow">Процесс</a>
+        <a href="#launch">Запуск</a>
+      </nav>
+
+      <div class="slide-meter" aria-label="Текущий слайд">
+        <span id="slideCurrent">01</span>
+        <span>/</span>
+        <span>06</span>
+      </div>
+      <select class="presentation-language" id="presentationLanguage" aria-label="Language">
+        <option value="pl">Polski</option>
+        <option value="uk">Українська</option>
+        <option value="ru">Русский</option>
+        <option value="en">English</option>
+      </select>
+    </header>
+
+    <main>
+      <section class="hero section-band" id="intro" data-slide="01">
+        <div class="section-inner hero-grid">
+          <div class="hero-copy reveal">
+            <p class="eyebrow">ogarniemy.pro</p>
+            <h1>Нужно решить задачу? Мы все уладим.</h1>
+            <p class="lead">
+              ogarniemy.pro - это городской помощник для поручений, доставок, поездок и срочных ситуаций. Клиент пишет, что нужно сделать, а система превращает просьбу в понятную задачу для сотрудника: с адресом, контактом, ценой и результатом.
+            </p>
+            <div class="slogan-strip" aria-label="Слоганы ogarniemy.pro">
+              <span>Ты говоришь. Мы улаживаем.</span>
+            </div>
+            <div class="hero-actions">
+              <a class="primary-action" href="#server">
+                <i data-lucide="sparkles"></i>
+                Что можно поручить
+              </a>
+            </div>
+          </div>
+
+          <aside class="command-center brand-showcase reveal" aria-label="Обзор ogarniemy.pro">
+            <div class="center-topline">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+            <div class="center-body">
+              <div class="brand-lockup">
+                <img src="./assets/client-app-icon.png" alt="ogarniemy.pro">
+                <div>
+                  <strong>ogarniemy.pro</strong>
+                  <span>городской сервис “под рукой”</span>
+                </div>
+              </div>
+              <div class="promise-card">
+                <h3>Главная идея</h3>
+                <p>ogarniemy.pro - это не “одна услуга”. Это городской помощник для всего, что нужно решить руками, временем, поездкой или ответственным человеком.</p>
+                <p>Не искать случайного человека. Не объяснять одно и то же пять раз. Не держать задачу в голове. Просто оставить поручение и получить помощь.</p>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="section-band server-band" id="server" data-slide="02">
+        <div class="section-inner split-layout">
+          <div class="section-copy reveal">
+            <p class="eyebrow">широкий формат</p>
+            <h2>Это не одна услуга. Это способ закрывать любые мелкие и срочные дела.</h2>
+            <p>
+              У людей постоянно появляются задачи, ради которых неудобно искать отдельного специалиста: что-то забрать, отвезти, купить, донести, проверить, сфотографировать, сопроводить или помочь на месте. ogarniemy.pro делает такие просьбы нормальным сервисом.
+            </p>
+            <p class="section-slogan">Одна просьба. Много возможностей. Спокойная голова.</p>
+            <div class="bullet-grid">
+              <div><strong>Доставить</strong><span>документы, покупки, вещи, посылку, ключи, оборудование или забытый предмет.</span></div>
+              <div><strong>Подвезти</strong><span>человека, коробки, инструмент, товар, подарок или что-то срочное по городу.</span></div>
+              <div><strong>Купить и привезти</strong><span>лекарства, продукты, расходники, детали, цветы, подарок или нужную мелочь.</span></div>
+              <div><strong>Помочь на месте</strong><span>накачать колесо, донести, встретить, подождать, проверить адрес, сделать фото, решить вопрос.</span></div>
+            </div>
+          </div>
+
+          <div class="server-panel reveal">
+            <div class="panel-header">
+              <span>Живые сценарии</span>
+              <i data-lucide="list-checks"></i>
+            </div>
+            <div class="server-row">
+              <span class="status new">срочно</span>
+              <strong>Забрать документы и отвезти клиенту</strong>
+              <small>В карточке уже есть адрес, телефон, время и сумма.</small>
+            </div>
+            <div class="server-row">
+              <span class="status active">быстро</span>
+              <strong>Купить деталь и привезти мастеру</strong>
+              <small>Клиенту не нужно искать транспорт и объяснять маршрут заново.</small>
+            </div>
+            <div class="server-row">
+              <span class="status done">надежно</span>
+              <strong>Накачать колесо и сопроводить до сервиса</strong>
+              <small>Ситуация решается как поручение, а не как паника.</small>
+            </div>
+            <div class="metrics">
+              <div><strong>1</strong><span>просьба</span></div>
+              <div><strong>1</strong><span>исполнитель</span></div>
+              <div><strong>0</strong><span>хаоса</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-band client-band" id="client" data-slide="03">
+        <div class="section-inner showcase-layout">
+          <div class="phone-stage reveal" aria-label="Экраны клиентского приложения">
+            <article class="phone-shot">
+              <div class="phone-status"></div>
+              <div class="app-top">
+                <span class="app-title"><img src="./assets/client-app-icon.png" alt=""> Клиент</span>
+              </div>
+              <h3>Новая задача</h3>
+              <label>Что нужно сделать</label>
+              <div class="input-line">Забрать и привезти</div>
+              <label>Описание</label>
+              <div class="input-area">Нужно забрать коробки, позвонить на месте и привезти по адресу.</div>
+              <div class="input-line small">Телефон для связи</div>
+              <div class="input-line small">Город, улица, дом, квартира</div>
+              <div class="choice-row">
+                <span class="selected">Из резерва</span>
+                <span>Наличные</span>
+              </div>
+              <button class="app-button">Отправить задачу</button>
+            </article>
+
+            <article class="phone-shot secondary-shot">
+              <div class="phone-status"></div>
+              <div class="app-top">
+                <span class="app-title"><img src="./assets/client-app-icon.png" alt=""> Мои задачи</span>
+              </div>
+              <div class="amount-row">
+                <div><small>К оплате</small><strong>120 PLN</strong></div>
+                <div><small>Резерв</small><strong>40 CRDT</strong></div>
+              </div>
+              <div class="task-card-mini">
+                <strong>Забрать коробки</strong>
+                <span>Принято сотрудником</span>
+                <em>Статус: в работе</em>
+              </div>
+              <div class="task-card-mini done">
+                <strong>Купить и доставить</strong>
+                <span>Выполнено</span>
+                <em>Ожидает расчет</em>
+              </div>
+            </article>
+          </div>
+
+          <div class="section-copy reveal">
+            <section class="inline-signup" id="client-signup">
+              <p class="eyebrow">Регистрация клиента</p>
+              <h3>Создайте аккаунт и скачайте приложение</h3>
+              <form class="inline-signup-form" data-signup-role="client">
+                <input name="displayName" autocomplete="name" placeholder="Имя клиента" aria-label="Имя клиента" data-placeholder="Имя клиента" required>
+                <input name="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
+                <input name="password" type="password" autocomplete="new-password" minlength="4" placeholder="Пароль" aria-label="Пароль" data-placeholder="Пароль" required>
+                <button class="primary-action" type="submit">Зарегистрироваться</button>
+              </form>
+              <p class="inline-signup-result" data-signup-result hidden></p>
+              <div class="app-downloads">
+                <article class="app-download-card">
+                  <img class="download-qr" src="./assets/client-download-qr.png" alt="QR-код приложения клиента для Android">
+                  <div>
+                    <h3>Приложение клиента для Android</h3>
+                    <p>Отсканируйте QR-код или скачайте приложение напрямую.</p>
+                    <a class="secondary-action" href="/downloads/client-ogarniemy.apk" download>Скачать для Android</a>
+                  </div>
+                </article>
+                <article class="app-download-card pending" id="client-iphone">
+                  <img class="download-qr" src="./assets/client-iphone-qr.png" alt="QR-код информации о приложении клиента для iPhone">
+                  <div>
+                    <h3>Приложение клиента для iPhone</h3>
+                    <p>Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.</p>
+                    <span class="secondary-action disabled">Скачать для iPhone</span>
+                  </div>
+                </article>
+              </div>
+            </section>
+            <p class="eyebrow">почему клиенту удобно?</p>
+            <h2>Клиенту не нужно искать, кому доверить задачу.</h2>
+            <p>
+              В обычной жизни мелкая просьба быстро превращается в цепочку звонков: кто может, когда, сколько стоит, куда ехать, кому звонить. В ogarniemy.pro это становится одной понятной заявкой. Человек пишет задачу, добавляет детали и видит, что процесс начался.
+            </p>
+            <p class="section-slogan">Не ищи помощь по чатам. Просто напиши, что нужно сделать.</p>
+            <ul class="clean-list">
+              <li>не нужно разбираться в категориях: можно описать задачу обычными словами;</li>
+              <li>все детали в одном месте: адрес, телефон, описание, цена и способ оплаты;</li>
+              <li>подходит для срочных ситуаций, когда помощь нужна сегодня или прямо сейчас;</li>
+              <li>задача не теряется в переписках: у нее есть ответственный и понятный статус;</li>
+              <li>клиент получает спокойствие: просьба принята, человек назначен, результат ожидаем.</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-band employee-band" id="employee" data-slide="04">
+        <div class="section-inner showcase-layout reverse">
+          <div class="section-copy reveal">
+            <section class="inline-signup" id="employee-signup">
+              <p class="eyebrow">Регистрация сотрудника</p>
+              <h3>Создайте аккаунт и скачайте приложение</h3>
+              <form class="inline-signup-form" data-signup-role="employee">
+                <input name="displayName" autocomplete="name" placeholder="Имя сотрудника" aria-label="Имя сотрудника" data-placeholder="Имя сотрудника" required>
+                <input name="phone" type="tel" inputmode="numeric" autocomplete="tel" placeholder="Номер телефона" aria-label="Номер телефона" data-placeholder="Номер телефона" required>
+                <input name="password" type="password" autocomplete="new-password" minlength="4" placeholder="Пароль" aria-label="Пароль" data-placeholder="Пароль" required>
+                <button class="primary-action" type="submit">Зарегистрироваться</button>
+              </form>
+              <p class="inline-signup-result" data-signup-result hidden></p>
+              <div class="app-downloads">
+                <article class="app-download-card">
+                  <img class="download-qr" src="./assets/employee-download-qr.png" alt="QR-код приложения сотрудника для Android">
+                  <div>
+                    <h3>Приложение сотрудника для Android</h3>
+                    <p>Отсканируйте QR-код или скачайте приложение напрямую.</p>
+                    <a class="secondary-action" href="/downloads/worker-ogarniemy.apk" download>Скачать для Android</a>
+                  </div>
+                </article>
+                <article class="app-download-card pending" id="employee-iphone">
+                  <img class="download-qr" src="./assets/employee-iphone-qr.png" alt="QR-код информации о приложении сотрудника для iPhone">
+                  <div>
+                    <h3>Приложение сотрудника для iPhone</h3>
+                    <p>Версия для iPhone готовится. QR-код ведет к актуальной информации на сайте.</p>
+                    <span class="secondary-action disabled">Скачать для iPhone</span>
+                  </div>
+                </article>
+              </div>
+            </section>
+            <p class="eyebrow">почему сотруднику выгодно?</p>
+            <h2>Сотрудник видит понятные заказы, а не обрывки переписок.</h2>
+            <p>
+              Приложение превращает работу в спокойный список задач. В карточке уже есть суть поручения, адрес, контакт, цена, способ оплаты и действие, которое нужно сделать. Сотрудник быстро понимает, подходит ли ему заказ, берет его и закрывает по факту выполнения.
+            </p>
+            <p class="section-slogan">Больше понятных заказов. Меньше хаоса. Спокойнее работа.</p>
+            <div class="pros-cons">
+              <div>
+                <h3>Удобно</h3>
+                <p>Меньше лишних звонков, меньше недопонимания, меньше “а пришлите адрес еще раз”. Все важное собрано в одном экране.</p>
+              </div>
+              <div>
+                <h3>Прозрачно</h3>
+                <p>Видны выполненные задачи, расчет, сумма к выплате и история. Сотрудник понимает, за что он получает деньги.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="phone-stage single reveal" aria-label="Экран приложения сотрудника">
+            <article class="phone-shot worker-shot">
+              <div class="phone-status"></div>
+              <div class="app-top">
+                <span class="app-title"><img src="./assets/employee-app-icon.png" alt=""> Сотрудник</span>
+              </div>
+              <div class="amount-row">
+                <div><small>К выплате</small><strong>280 PLN</strong></div>
+                <div><small>Резерв</small><strong>60 CRDT</strong></div>
+              </div>
+              <h3>Доступные задачи</h3>
+              <div class="task-card-mini">
+                <strong>Накачать колесо</strong>
+                <span>Город, улица, цена, оплата</span>
+                <div class="actions">
+                  <button>Принять</button>
+                  <button>Отказ</button>
+                </div>
+              </div>
+              <div class="task-card-mini active-task">
+                <strong>Доставка пакета</strong>
+                <span>В работе • принято 12:40</span>
+                <div class="actions">
+                  <button>Готово</button>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-band flow-band" id="flow" data-slide="05">
+        <div class="section-inner">
+          <div class="section-heading reveal">
+            <p class="eyebrow">как это работает?</p>
+            <h2>Простой путь: попросил, приняли, сделали, рассчитались.</h2>
+            <p>
+              Сервис должен ощущаться как надежный человек “под рукой”, только с нормальной организацией. Клиент не держит задачу в голове, сотрудник не теряет детали, компания видит качество и деньги.
+            </p>
+            <p class="section-slogan">От просьбы до результата - без потерянных сообщений.</p>
+          </div>
+
+          <div class="timeline">
+            <article class="timeline-step reveal">
+              <span>01</span>
+              <h3>Клиент оставляет просьбу</h3>
+              <p>Через приложение, сайт, мессенджер или звонок. Формулировка может быть простой: “заберите”, “отвезите”, “помогите”, “нужно срочно”.</p>
+            </article>
+            <article class="timeline-step reveal">
+              <span>02</span>
+              <h3>Задача становится ясной</h3>
+              <p>Добавляются адрес, контакт, цена, способ оплаты, время и важные детали. Исполнитель получает нормальную карточку, а не набор сообщений.</p>
+            </article>
+            <article class="timeline-step reveal">
+              <span>03</span>
+              <h3>Сотрудник берет в работу</h3>
+              <p>Он принимает задачу, видит всю информацию и выполняет ее. Клиент понимает, что поручение уже не висит в воздухе.</p>
+            </article>
+            <article class="timeline-step reveal">
+              <span>04</span>
+              <h3>Все закрывается честно</h3>
+              <p>Статус меняется, сумма попадает в расчет, история сохраняется. Это удобно клиенту, сотруднику и компании.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section-band launch-band" id="launch" data-slide="06">
+        <div class="section-inner final-layout">
+          <div class="section-copy reveal">
+            <p class="eyebrow">почему мы?</p>
+            <h2>Людям постоянно нужна помощь, но мелкие задачи до сих пор решаются слишком хаотично.</h2>
+            <p>
+              У каждого бывают ситуации, когда нет времени, машины, инструмента, знакомого человека или просто сил. ogarniemy.pro может стать привычной кнопкой помощи: открыл, написал задачу, получил результат.
+            </p>
+            <p class="section-slogan">Маленькие дела тоже заслуживают нормального сервиса.</p>
+            <ul class="clean-list">
+              <li>сервис не ограничен одной нишей, поэтому заказов может быть много и разных;</li>
+              <li>клиенту проще доверять приложению, где есть понятный процесс и история;</li>
+              <li>сотрудникам проще работать, потому что задачи собраны в одном месте;</li>
+              <li>после запуска можно расширять категории, города, сотрудников и партнеров;</li>
+              <li>главное обещание короткое и сильное: “Ogarniemy” - мы все уладим.</li>
+            </ul>
+          </div>
+
+          <div class="launch-card reveal">
+            <div class="launch-logo">
+              <img src="./assets/client-app-icon.png" alt="ogarniemy.pro">
+              <span>ogarniemy.pro</span>
+            </div>
+            <p>
+              Клиент получает спокойствие, сотрудник получает заказы, компания получает управляемый сервис. Чем проще задача выглядит для клиента, тем сильнее сервис внутри.
+            </p>
+            <div class="final-actions">
+              <a class="primary-action" href="#intro">
+                <i data-lucide="rotate-ccw"></i>
+                Смотреть снова
+              </a>
+              <a class="secondary-action" href="#client-signup">
+                <i data-lucide="user"></i>
+                Я клиент
+              </a>
+              <a class="secondary-action" href="#employee-signup">
+                <i data-lucide="briefcase-business"></i>
+                Я сотрудник
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="deck-controls" aria-label="Управление слайдами">
+      <button class="icon-action" id="prevSlide" type="button" aria-label="Предыдущий слайд">
+        <i data-lucide="arrow-up"></i>
+      </button>
+      <button class="icon-action" id="nextSlide" type="button" aria-label="Следующий слайд">
+        <i data-lucide="arrow-down"></i>
+      </button>
+    </div>
+
+    <div class="progress-track" aria-hidden="true">
+      <span id="progressBar"></span>
+    </div>
+
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script src="./script.js?v=7"></script>
+    <script src="./language.js?v=4"></script>
+  </body>
+</html>
