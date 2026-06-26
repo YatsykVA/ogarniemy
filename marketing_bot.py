@@ -1124,7 +1124,7 @@ async def handle_telegram_update(update: dict[str, Any]) -> None:
     chat_type = message["chat"].get("type")
     if chat_type == "private":
         await handle_private_message(message)
-    elif chat_type in {"group", "supergroup", "channel"}:
+    elif chat_type in {"group", "supergroup"}:
         await handle_group_message(message)
 
 
