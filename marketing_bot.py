@@ -248,13 +248,10 @@ def init_db() -> None:
 
             create table if not exists telegram_outbox (
               id integer primary key autoincrement,
-              action text not null default 'send',
               chat_id text not null,
               body text not null,
               image_url text default '',
               reply_to_message_id integer,
-              source_chat_id text default '',
-              source_message_id text default '',
               attempts integer default 0,
               not_before integer not null,
               status text default 'pending',
@@ -274,9 +271,12 @@ def init_db() -> None:
         ensure_column(conn, "facebook_targets", "keywords", "text default ''")
         ensure_column(conn, "facebook_targets", "action", "text default 'same_group'")
         ensure_column(conn, "facebook_targets", "response_message_id", "integer")
-        ensure_column(conn, "telegram_outbox", "action", "text not null default 'send'")
+        ensure_column(conn, "telegram_outbox", "kind", "text default 'send'")
         ensure_column(conn, "telegram_outbox", "source_chat_id", "text default ''")
-        ensure_column(conn, "telegram_outbox", "source_message_id", "text default ''")
+        ensure_column(conn, "telegram_outbox", "source_message_id", "integer")
+        ensure_column(conn, "telegram_outbox", "target_chat_id", "text default ''")
+        ensure_column(conn, "telegram_outbox", "action", "text default ''")
+        ensure_column(conn, "telegram_outbox", "keyword", "text default ''")
 
 
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
@@ -348,8 +348,8 @@ def queue_telegram_ad(
     with db() as conn:
         conn.execute(
             """
-            insert into telegram_outbox(action, chat_id, body, image_url, reply_to_message_id, not_before, detail, created_at)
-            values('send', ?, ?, ?, ?, ?, ?, ?)
+            insert into telegram_outbox(chat_id, body, image_url, reply_to_message_id, not_before, detail, created_at)
+            values(?, ?, ?, ?, ?, ?, ?)
             """,
             (str(chat_id), text, image_url or "", reply_to_message_id, int(not_before or now), detail[:1000], now),
         )
@@ -361,18 +361,32 @@ def queue_telegram_forward(
     target_chat_id: int | str,
     not_before: int | None = None,
     detail: str = "",
+    keyword: str = "",
 ) -> None:
     now = int(time.time())
     with db() as conn:
         conn.execute(
             """
-            insert into telegram_outbox(action, chat_id, body, source_chat_id, source_message_id, not_before, detail, created_at)
-            values('forward', ?, '', ?, ?, ?, ?, ?)
+            insert into telegram_outbox(
+                chat_id, body, image_url, reply_to_message_id, not_before, detail, created_at,
+                kind, source_chat_id, source_message_id, target_chat_id, action, keyword
+            )
+            values(?, '', '', null, ?, ?, ?, 'forward', ?, ?, ?, 'keyword_forward', ?)
             """,
-            (str(target_chat_id), str(source_chat_id), str(message_id), int(not_before or now), detail[:1000], now),
+            (
+                str(target_chat_id),
+                int(not_before or now),
+                detail[:1000],
+                now,
+                str(source_chat_id),
+                int(message_id),
+                str(target_chat_id),
+                str(keyword or ""),
+            ),
         )
 
-async def wait_for_telegram_slot(max_wait: float = 15) -> bool:
+
+async def wait_for_telegram_slot(max_wait: float = 10) -> bool:
     global TELEGRAM_NEXT_SEND_AT
     now = time.time()
     delay = max(0.0, TELEGRAM_NEXT_SEND_AT - now)
@@ -460,38 +474,57 @@ async def async_forward_telegram_message(
     message_id: int | str | None,
     target_chat_id: int | str,
     *,
-    queue_on_limit: bool = True,
     max_wait: float = 15,
-) -> bool:
+    queue_on_limit: bool = True,
+    keyword: str = "",
+) -> str:
     if not message_id:
         print(f"telegram userbot forward failed from {source_chat_id} to {target_chat_id}: missing message id")
-        return False
+        return "failed"
     try:
         if not await wait_for_telegram_slot(max_wait=max_wait):
             not_before = int(TELEGRAM_NEXT_SEND_AT) + 1
             if queue_on_limit:
-                queue_telegram_forward(source_chat_id, message_id, target_chat_id, not_before, "telegram_rate_limit_forward")
-            print(f"telegram userbot forward delayed from {source_chat_id} to {target_chat_id}: rate limit until {not_before}")
-            return False
+                queue_telegram_forward(source_chat_id, message_id, target_chat_id, not_before, "telegram_rate_limit", keyword)
+                log_marketing(
+                    "telegram",
+                    "group",
+                    str(source_chat_id),
+                    "",
+                    "keyword_forward",
+                    "queued",
+                    f"to {target_chat_id}, keyword: {keyword}, queued until {not_before}",
+                )
+                print(f"telegram userbot forward queued from {source_chat_id} to {target_chat_id}: rate limit until {not_before}")
+                return "queued"
+            print(f"telegram userbot forward delayed from {source_chat_id} to {target_chat_id}: rate limit")
+            return "failed"
         client = await userbot_client()
         await client.forward_messages(int(target_chat_id), int(message_id), from_peer=int(source_chat_id))
-        return True
+        return "sent"
     except Exception as exc:
         _TelegramClient, _events, _utils, _MessageMediaPhoto, FloodWaitError = load_telethon()
         if isinstance(exc, FloodWaitError):
             wait_seconds = set_telegram_flood_wait(getattr(exc, "seconds", 60))
+            not_before = int(time.time()) + wait_seconds + 3
             if queue_on_limit:
-                queue_telegram_forward(
-                    source_chat_id,
-                    message_id,
-                    target_chat_id,
-                    int(time.time()) + wait_seconds + 3,
-                    f"flood_wait_forward_{wait_seconds}",
+                queue_telegram_forward(source_chat_id, message_id, target_chat_id, not_before, f"flood_wait_{wait_seconds}", keyword)
+                log_marketing(
+                    "telegram",
+                    "group",
+                    str(source_chat_id),
+                    "",
+                    "keyword_forward",
+                    "queued",
+                    f"to {target_chat_id}, keyword: {keyword}, flood wait {wait_seconds}s",
                 )
+                print(f"telegram userbot forward queued from {source_chat_id} to {target_chat_id}: flood wait {wait_seconds} seconds")
+                return "queued"
             print(f"telegram userbot forward delayed from {source_chat_id} to {target_chat_id}: flood wait {wait_seconds} seconds")
-            return False
+            return "failed"
         print(f"telegram userbot forward failed from {source_chat_id} to {target_chat_id}: {exc}")
-        return False
+        return "failed"
+
 
 def run_userbot_coroutine(coro: Any) -> Any:
     if TELEGRAM_USERBOT_LOOP and TELEGRAM_USERBOT_LOOP.is_running():
@@ -828,16 +861,23 @@ async def async_process_telegram_outbox(limit: int = 5) -> None:
     for row in rows:
         if TELEGRAM_NEXT_SEND_AT > time.time() + 1:
             return
-        action = str(row["action"] or "send") if "action" in row.keys() else "send"
-        if action == "forward":
-            ok = await async_forward_telegram_message(
+        kind = row["kind"] if "kind" in row.keys() and row["kind"] else "send"
+        if kind == "forward":
+            result = await async_forward_telegram_message(
                 row["source_chat_id"],
                 row["source_message_id"],
-                row["chat_id"],
+                row["target_chat_id"] or row["chat_id"],
                 queue_on_limit=False,
                 max_wait=15,
+                keyword=row["keyword"] if "keyword" in row.keys() else "",
             )
-            log_action = "queued_forward"
+            ok = result == "sent"
+            action = row["action"] if "action" in row.keys() and row["action"] else "keyword_forward"
+            target_type = "group" if action == "keyword_forward" else "outbox"
+            target_id = row["source_chat_id"] or row["chat_id"]
+            detail = f"queued #{row['id']} to {row['target_chat_id'] or row['chat_id']}"
+            if "keyword" in row.keys() and row["keyword"]:
+                detail += f", keyword: {row['keyword']}"
         else:
             ok = await async_send_telegram_ad(
                 row["chat_id"],
@@ -847,14 +887,17 @@ async def async_process_telegram_outbox(limit: int = 5) -> None:
                 queue_on_limit=False,
                 max_wait=15,
             )
-            log_action = "queued_post"
+            action = "queued_post"
+            target_type = "outbox"
+            target_id = row["chat_id"]
+            detail = f"queued #{row['id']}"
         with db() as conn:
             if ok:
                 conn.execute(
                     "update telegram_outbox set status = 'sent', sent_at = ? where id = ?",
                     (int(time.time()), row["id"]),
                 )
-                log_marketing("telegram", "outbox", row["chat_id"], "", log_action, "sent", f"queued #{row['id']}")
+                log_marketing("telegram", target_type, target_id, "", action, "sent", detail)
             else:
                 attempts = int(row["attempts"] or 0) + 1
                 next_try = int(max(time.time() + 300, TELEGRAM_NEXT_SEND_AT + 1))
@@ -863,7 +906,8 @@ async def async_process_telegram_outbox(limit: int = 5) -> None:
                     "update telegram_outbox set attempts = ?, not_before = ?, status = ?, detail = ? where id = ?",
                     (attempts, next_try, status, "retry_after_rate_limit", row["id"]),
                 )
-                log_marketing("telegram", "outbox", row["chat_id"], "", log_action, status, f"queued #{row['id']} attempt {attempts}")
+                log_marketing("telegram", target_type, target_id, "", action, status, f"{detail} attempt {attempts}")
+
 
 def due_schedules(platform: str = "telegram") -> list[sqlite3.Row]:
     now = time.localtime()
@@ -1117,16 +1161,24 @@ async def handle_group_message(message: dict[str, Any]) -> None:
                     return
                 reply_to = message.get("message_id") if reply_chat_id == chat_id else None
                 if target_chat_id:
-                    ok = await async_forward_telegram_message(chat_id, message.get("message_id"), reply_chat_id)
-                    log_marketing(
-                        "telegram",
-                        "group",
+                    result = await async_forward_telegram_message(
                         chat_id,
-                        "",
-                        "keyword_forward",
-                        "sent" if ok else "failed",
-                        f"to {reply_chat_id}, keyword: {keyword}",
+                        message.get("message_id"),
+                        reply_chat_id,
+                        max_wait=15,
+                        queue_on_limit=True,
+                        keyword=keyword,
                     )
+                    if result != "queued":
+                        log_marketing(
+                            "telegram",
+                            "group",
+                            chat_id,
+                            "",
+                            "keyword_forward",
+                            result,
+                            f"to {reply_chat_id}, keyword: {keyword}",
+                        )
                 elif response:
                     await async_send_telegram_ad(reply_chat_id, response["body"], response["image_url"] or "", reply_to)
                 else:
