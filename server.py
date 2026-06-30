@@ -8364,6 +8364,7 @@ FACEBOOK_ADS_HTML = r"""<!doctype html>
           <button class="bigbtn dark" onclick="refreshState()"><span class="icon">🔄</span>Обновить список групп</button>
         </div>
         <div class="notice">Все кнопки этой панели подключены к серверу: запуск/остановка, слова, исключения, группы, автопоиск, тест Telegram, повтор последнего и очистка постов.</div>
+        <div id="statusLine" class="muted" style="margin-top:10px;font-weight:800">Панель загружается...</div>
       </section>
       <section class="card">
         <h3>Настройки отправки</h3>
@@ -8398,39 +8399,189 @@ FACEBOOK_ADS_HTML = r"""<!doctype html>
     </aside>
   </div>
 </main>
+
 <script>
-let adminPassword = sessionStorage.getItem("adminPassword") || "";
-let state = {};
-function adminHeaders(extra={}){ if(!adminPassword){ adminPassword = prompt("Admin password") || ""; sessionStorage.setItem("adminPassword", adminPassword); } return {"X-Admin-Password":adminPassword, ...extra}; }
-async function requireAdminAccess(start){ while(true){ if(!adminPassword) adminPassword = prompt("Admin password") || ""; if(!adminPassword){ document.body.innerHTML=""; return; } sessionStorage.setItem("adminPassword", adminPassword); const res=await fetch("/api/admin/check-password",{headers:{"X-Admin-Password":adminPassword}}); if(res.ok){ document.body.classList.remove("locked"); start(); return; } sessionStorage.removeItem("adminPassword"); adminPassword=""; alert("Неверный пароль администратора"); } }
-function esc(v){ return String(v ?? "").replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
-async function api(path, body){ const res=await fetch(path,{method:"POST",headers:adminHeaders({"Content-Type":"application/json"}),body:JSON.stringify(body||{})}); const data=await res.json().catch(()=>({})); if(!res.ok) throw new Error(data.error || "Ошибка сервера"); return data; }
-async function refreshState(){ const res=await fetch("/api/admin/collectorhub/state",{headers:adminHeaders()}); if(!res.ok){ alert("Не удалось загрузить CollectorHub"); return; } state=await res.json(); render(); }
-function render(){
-  runPill.textContent = state.running ? "▶ Работает" : (state.searchRunning ? "🔍 Автопоиск" : "■ Остановлен"); runPill.className = "pill " + (state.running ? "green" : (state.searchRunning ? "amber" : "red"));
-  groupsPill.textContent = (state.groups||[]).length + " групп";
-  const settings = state.settings || {}; sendMode.value = settings.send_mode || "telegram"; modePill.textContent = sendMode.options[sendMode.selectedIndex]?.textContent || "Telegram";
-  keywords.value = state.keywords || ""; exclusions.value = state.exclusions || ""; groupsText.value = state.groupsText || ""; postsLimit.value = settings.max_posts_per_group || 100;
-  fbTargetName.value = settings.facebook_target_group_name || ""; fbTargetUrl.value = settings.facebook_target_group_url || "";
-  fbTargetSelect.innerHTML = `<option value="">Не выбрана</option>` + (state.groups||[]).map(g=>`<option value="${esc(g.url)}" ${g.url===(settings.facebook_target_group_url||"")?"selected":""}>${esc(g.name)}</option>`).join("");
-  groupsList.innerHTML = (state.groups||[]).map(g=>`<div class="item"><strong>${esc(g.name)}</strong><div class="muted">${esc(g.url)}</div></div>`).join("") || `<div class="item muted">Пока нет групп Facebook</div>`;
-  log.textContent = state.log || "Журнал пока пуст.";
-}
-fbTargetSelect?.addEventListener("change",()=>{ const g=(state.groups||[]).find(x=>x.url===fbTargetSelect.value); if(g){ fbTargetName.value=g.name; fbTargetUrl.value=g.url; }});
-function showPanel(name){ document.querySelectorAll('.panel').forEach(p=>p.style.display='none'); const el=document.getElementById('panel-'+name); if(el) el.style.display='block'; }
-async function saveWords(){ await api('/api/admin/collectorhub/save-words',{keywords:keywords.value, exclusions:exclusions.value}); await refreshState(); alert('Слова сохранены'); }
-async function saveGroups(){ await api('/api/admin/collectorhub/save-groups',{groupsText:groupsText.value}); await refreshState(); alert('Группы сохранены'); }
-async function saveSettings(){ await api('/api/admin/collectorhub/save-settings',{sendMode:sendMode.value, facebookTargetName:fbTargetName.value, facebookTargetUrl:fbTargetUrl.value, postsLimit:postsLimit.value}); await refreshState(); alert('Настройки сохранены'); }
-async function saveAll(){ await saveWords(); await saveGroups(); await saveSettings(); }
-async function startCollector(){ try{ await saveAll(); await api('/api/admin/collectorhub/start',{}); await refreshState(); }catch(e){ alert(e.message); } }
-async function stopCollector(){ try{ await api('/api/admin/collectorhub/stop',{}); await refreshState(); }catch(e){ alert(e.message); } }
-async function clearPosts(){ if(!confirm('Очистить найденные посты CollectorHub?')) return; await api('/api/admin/collectorhub/reset-posts',{}); alert('Посты очищены'); }
-async function showCommandResult(title, fn){ try{ const r=await fn(); const text=(r.stdout||'') + (r.stderr ? '\n' + r.stderr : ''); alert(title + ': ' + (r.ok ? 'OK' : 'ОШИБКА') + (text.trim() ? '\n\n' + text.trim() : '')); await refreshState(); }catch(e){ alert(title + ': ' + e.message); await refreshState(); } }
-async function searchGroups(){ const q=(searchQuery.value||keywords.value||'').trim(); if(!q){ alert('Введи слова для автопоиска групп'); return; } await api('/api/admin/collectorhub/search-groups',{query:q}); await refreshState(); alert('Автопоиск запущен. Смотри журнал справа.'); }
-async function testTelegram(){ await showCommandResult('Тест Telegram', ()=>api('/api/admin/collectorhub/test-telegram',{})); }
-async function resendLast(){ await showCommandResult('Повтор последнего поста', ()=>api('/api/admin/collectorhub/resend-last',{})); }
-requireAdminAccess(refreshState); setInterval(refreshState, 6000);
+(function(){
+  "use strict";
+  let adminPassword = sessionStorage.getItem("adminPassword") || "";
+  let state = {};
+  const $ = (id) => document.getElementById(id);
+  const els = {};
+  function bindElements(){
+    ["runPill","groupsPill","modePill","postsLimit","sendMode","fbTargetSelect","fbTargetName","fbTargetUrl","keywords","exclusions","groupsText","searchQuery","groupsList","log","statusLine"].forEach(id => els[id] = $(id));
+  }
+  function setStatus(text, bad=false){
+    const el = els.statusLine;
+    if(el){ el.textContent = text || ""; el.style.color = bad ? "#b91c1c" : "#166534"; }
+    console.log("CollectorHub:", text);
+  }
+  function adminHeaders(extra={}){
+    if(!adminPassword){
+      adminPassword = prompt("Admin password") || "";
+      if(adminPassword) sessionStorage.setItem("adminPassword", adminPassword);
+    }
+    return {"X-Admin-Password": adminPassword, ...extra};
+  }
+  async function requireAdminAccess(startFn){
+    while(true){
+      if(!adminPassword){ adminPassword = prompt("Admin password") || ""; }
+      if(!adminPassword){ document.body.innerHTML = ""; return; }
+      sessionStorage.setItem("adminPassword", adminPassword);
+      try{
+        const res = await fetch("/api/admin/check-password", {headers:{"X-Admin-Password": adminPassword}});
+        if(res.ok){ document.body.classList.remove("locked"); startFn(); return; }
+      }catch(e){
+        alert("Сервер не отвечает: " + e.message);
+        return;
+      }
+      sessionStorage.removeItem("adminPassword");
+      adminPassword = "";
+      alert("Неверный пароль администратора");
+    }
+  }
+  function esc(v){ return String(v ?? "").replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch])); }
+  async function api(path, body){
+    setStatus("Выполняю: " + path);
+    const res = await fetch(path, {method:"POST", headers:adminHeaders({"Content-Type":"application/json"}), body:JSON.stringify(body || {})});
+    const data = await res.json().catch(()=>({error:"Сервер вернул не JSON"}));
+    if(!res.ok) throw new Error(data.error || ("Ошибка сервера " + res.status));
+    return data;
+  }
+  async function refreshState(){
+    try{
+      const res = await fetch("/api/admin/collectorhub/state", {headers:adminHeaders()});
+      const data = await res.json().catch(()=>({}));
+      if(!res.ok) throw new Error(data.error || "Не удалось загрузить CollectorHub");
+      state = data;
+      render();
+      setStatus("Панель обновлена");
+    }catch(e){
+      setStatus("Ошибка загрузки панели: " + e.message, true);
+    }
+  }
+  function render(){
+    const settings = state.settings || {};
+    if(els.runPill){
+      els.runPill.textContent = state.running ? "▶ Работает" : (state.searchRunning ? "🔍 Автопоиск" : "■ Остановлен");
+      els.runPill.className = "pill " + (state.running ? "green" : (state.searchRunning ? "amber" : "red"));
+    }
+    if(els.groupsPill) els.groupsPill.textContent = (state.groups || []).length + " групп";
+    if(els.sendMode) els.sendMode.value = settings.send_mode || "telegram";
+    if(els.modePill && els.sendMode) els.modePill.textContent = els.sendMode.options[els.sendMode.selectedIndex]?.textContent || "Telegram";
+    if(els.keywords) els.keywords.value = state.keywords || "";
+    if(els.exclusions) els.exclusions.value = state.exclusions || "";
+    if(els.groupsText) els.groupsText.value = state.groupsText || "";
+    if(els.postsLimit) els.postsLimit.value = settings.max_posts_per_group || 100;
+    if(els.fbTargetName) els.fbTargetName.value = settings.facebook_target_group_name || "";
+    if(els.fbTargetUrl) els.fbTargetUrl.value = settings.facebook_target_group_url || "";
+    if(els.fbTargetSelect){
+      els.fbTargetSelect.innerHTML = `<option value="">Не выбрана</option>` + (state.groups || []).map(g => `<option value="${esc(g.url)}" ${g.url === (settings.facebook_target_group_url || "") ? "selected" : ""}>${esc(g.name)}</option>`).join("");
+    }
+    if(els.groupsList){
+      els.groupsList.innerHTML = (state.groups || []).map(g => `<div class="item"><strong>${esc(g.name)}</strong><div class="muted">${esc(g.url)}</div></div>`).join("") || `<div class="item muted">Пока нет групп Facebook</div>`;
+    }
+    if(els.log) els.log.textContent = state.log || "Журнал пока пуст.";
+  }
+  function showPanel(name){
+    document.querySelectorAll('.panel').forEach(p => p.style.display = 'none');
+    const el = $('panel-' + name);
+    if(el) el.style.display = 'block';
+    setStatus("Открыт раздел: " + name);
+  }
+  async function saveWords(silent=false){
+    await api('/api/admin/collectorhub/save-words', {keywords:els.keywords?.value || "", exclusions:els.exclusions?.value || ""});
+    await refreshState();
+    if(!silent) alert('Слова сохранены');
+  }
+  async function saveGroups(silent=false){
+    await api('/api/admin/collectorhub/save-groups', {groupsText:els.groupsText?.value || ""});
+    await refreshState();
+    if(!silent) alert('Группы сохранены');
+  }
+  async function saveSettings(silent=false){
+    await api('/api/admin/collectorhub/save-settings', {
+      sendMode:els.sendMode?.value || "telegram",
+      facebookTargetName:els.fbTargetName?.value || "",
+      facebookTargetUrl:els.fbTargetUrl?.value || "",
+      postsLimit:els.postsLimit?.value || 100
+    });
+    await refreshState();
+    if(!silent) alert('Настройки сохранены');
+  }
+  async function saveAll(){
+    try{
+      await saveWords(true);
+      await saveGroups(true);
+      await saveSettings(true);
+      setStatus('Всё сохранено');
+      alert('Всё сохранено');
+    }catch(e){ alert('Ошибка сохранения: ' + e.message); setStatus(e.message, true); }
+  }
+  async function startCollector(){
+    try{
+      await saveWords(true);
+      await saveGroups(true);
+      await saveSettings(true);
+      const r = await api('/api/admin/collectorhub/start', {});
+      await refreshState();
+      alert(r.alreadyRunning ? 'Collector уже работает' : 'Collector запущен');
+    }catch(e){ alert('Не запустилось: ' + e.message); setStatus(e.message, true); }
+  }
+  async function stopCollector(){
+    try{
+      const r = await api('/api/admin/collectorhub/stop', {});
+      await refreshState();
+      alert(r.alreadyStopped ? 'Collector уже остановлен' : 'Collector остановлен');
+    }catch(e){ alert('Не остановилось: ' + e.message); setStatus(e.message, true); }
+  }
+  async function clearPosts(){
+    if(!confirm('Очистить найденные посты CollectorHub?')) return;
+    try{ await api('/api/admin/collectorhub/reset-posts', {}); await refreshState(); alert('Посты очищены'); }
+    catch(e){ alert('Ошибка очистки: ' + e.message); setStatus(e.message, true); }
+  }
+  async function showCommandResult(title, fn){
+    try{
+      const r = await fn();
+      const text = (r.stdout || '') + (r.stderr ? '\n' + r.stderr : '');
+      alert(title + ': ' + (r.ok ? 'OK' : 'ОШИБКА') + (text.trim() ? '\n\n' + text.trim() : ''));
+      await refreshState();
+    }catch(e){ alert(title + ': ' + e.message); setStatus(e.message, true); await refreshState(); }
+  }
+  async function searchGroups(){
+    const q = (els.searchQuery?.value || els.keywords?.value || '').trim();
+    if(!q){ alert('Введи слова для автопоиска групп'); return; }
+    try{ await api('/api/admin/collectorhub/search-groups', {query:q}); await refreshState(); alert('Автопоиск запущен. Смотри журнал справа.'); }
+    catch(e){ alert('Автопоиск не запустился: ' + e.message); setStatus(e.message, true); }
+  }
+  async function testTelegram(){ await showCommandResult('Тест Telegram', () => api('/api/admin/collectorhub/test-telegram', {})); }
+  async function resendLast(){ await showCommandResult('Повтор последнего поста', () => api('/api/admin/collectorhub/resend-last', {})); }
+  document.addEventListener('DOMContentLoaded', () => {
+    bindElements();
+    document.querySelectorAll('button').forEach(b => { if(!b.getAttribute('type')) b.setAttribute('type','button'); });
+    if(els.fbTargetSelect){
+      els.fbTargetSelect.addEventListener('change', () => {
+        const g = (state.groups || []).find(x => x.url === els.fbTargetSelect.value);
+        if(g){ els.fbTargetName.value = g.name; els.fbTargetUrl.value = g.url; }
+      });
+    }
+    window.refreshState = refreshState;
+    window.showPanel = showPanel;
+    window.saveWords = () => saveWords(false);
+    window.saveGroups = () => saveGroups(false);
+    window.saveSettings = () => saveSettings(false);
+    window.saveAll = saveAll;
+    window.startCollector = startCollector;
+    window.stopCollector = stopCollector;
+    window.clearPosts = clearPosts;
+    window.searchGroups = searchGroups;
+    window.testTelegram = testTelegram;
+    window.resendLast = resendLast;
+    requireAdminAccess(refreshState);
+    setInterval(refreshState, 6000);
+  });
+})();
 </script>
+
 </body>
 </html>"""
 
