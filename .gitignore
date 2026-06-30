@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+
+# Live data must stay on the server/persistent disk, not in git.
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+ogarniemy_data/
+marketing_bot_config.json
+*.session
+*.session-journal
+assets/marketing/
+downloads/
+
+# Local environment/secrets.
+.env
+*.env
+!.env.example

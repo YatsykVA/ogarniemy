@@ -27,8 +27,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 
-DB_PATH = os.environ.get("MARKETING_BOT_DB", "marketing_bot.db")
-CONFIG_PATH = os.environ.get("MARKETING_BOT_CONFIG", "marketing_bot_config.json")
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.abspath(
+    os.environ.get(
+        "OGARNIEMY_DATA_DIR",
+        os.environ.get("TASK_DATA_DIR", os.path.join(os.path.dirname(ROOT), "ogarniemy_data")),
+    )
+)
+os.makedirs(DATA_DIR, exist_ok=True)
+DB_PATH = os.path.abspath(
+    os.environ.get(
+        "MARKETING_BOT_DB",
+        os.environ.get("TASK_DB_PATH", os.path.join(DATA_DIR, "server.db")),
+    )
+)
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+CONFIG_PATH = os.environ.get("MARKETING_BOT_CONFIG", os.path.join(DATA_DIR, "marketing_bot_config.json"))
 FACEBOOK_PAGE_ACCESS_TOKEN = os.environ.get("FACEBOOK_PAGE_ACCESS_TOKEN", "")
 FACEBOOK_VERIFY_TOKEN = os.environ.get("FACEBOOK_VERIFY_TOKEN", "ogarniemy-verify")
 PRESENTATION_URL = os.environ.get("PRESENTATION_URL", "https://ogarniemy.pro")
@@ -36,20 +50,21 @@ TELEGRAM_SEND_INTERVAL_SECONDS = float(os.environ.get("TELEGRAM_SEND_INTERVAL_SE
 TELEGRAM_USERBOT_CLIENT: Any | None = None
 TELEGRAM_USERBOT_LOOP: asyncio.AbstractEventLoop | None = None
 TELEGRAM_NEXT_SEND_AT = 0.0
+TELEGRAM_USERBOT_STOP_REQUESTED = False
 PENDING_TELEGRAM_LOGINS: dict[str, dict[str, Any]] = {}
 
 
 CLIENT_TEXT = (
-    "РќСѓР¶РµРЅ РјР°СЃС‚РµСЂ? РЎРѕР·РґР°Р№С‚Рµ Р·Р°СЏРІРєСѓ Р±РµСЃРїР»Р°С‚РЅРѕ, Рё Ogarniemy Р±С‹СЃС‚СЂРѕ РїРѕРјРѕР¶РµС‚ РЅР°Р№С‚Рё "
-    f"РёСЃРїРѕР»РЅРёС‚РµР»СЏ РІ РІР°С€РµРј РіРѕСЂРѕРґРµ.\n\nР РµРіРёСЃС‚СЂР°С†РёСЏ: {PRESENTATION_URL}"
+    "Нужен мастер? Создайте заявку бесплатно, и Ogarniemy быстро поможет найти "
+    f"исполнителя в вашем городе.\n\nРегистрация: {PRESENTATION_URL}"
 )
 WORKER_TEXT = (
-    "Р’С‹ РјР°СЃС‚РµСЂ? РџРѕР»СѓС‡Р°Р№С‚Рµ РЅРѕРІС‹Рµ Р·Р°РєР°Р·С‹ СЂСЏРґРѕРј СЃ РІР°РјРё. РџРµСЂРІС‹Р№ РјРµСЃСЏС† Р±РµСЃРїР»Р°С‚РЅРѕ.\n\n"
-    f"Р РµРіРёСЃС‚СЂР°С†РёСЏ: {PRESENTATION_URL}"
+    "Вы мастер? Получайте новые заказы рядом с вами. Первый месяц бесплатно.\n\n"
+    f"Регистрация: {PRESENTATION_URL}"
 )
 GROUP_TEXT = (
-    "Ogarniemy РїРѕРјРѕРіР°РµС‚ Р±С‹СЃС‚СЂРѕ РЅР°Р№С‚Рё РјР°СЃС‚РµСЂР° РґР»СЏ Р»СЋР±РѕР№ Р·Р°РґР°С‡Рё. Р”Р»СЏ РєР»РёРµРЅС‚РѕРІ "
-    "Р±РµСЃРїР»Р°С‚РЅРѕ, РґР»СЏ РјР°СЃС‚РµСЂРѕРІ РїРµСЂРІС‹Р№ РјРµСЃСЏС† Р±РµСЃРїР»Р°С‚РЅРѕ.\n\n"
+    "Ogarniemy помогает быстро найти мастера для любой задачи. Для клиентов "
+    "бесплатно, для мастеров первый месяц бесплатно.\n\n"
     f"{PRESENTATION_URL}"
 )
 
@@ -118,7 +133,7 @@ def telegram_config() -> dict[str, str]:
     return {
         "api_id": os.environ.get("TELEGRAM_API_ID") or config.get("telegram_api_id", ""),
         "api_hash": os.environ.get("TELEGRAM_API_HASH") or config.get("telegram_api_hash", ""),
-        "session": os.environ.get("TELEGRAM_SESSION") or config.get("telegram_session", "ogarniemy_userbot"),
+        "session": os.environ.get("TELEGRAM_SESSION") or config.get("telegram_session", os.path.join(DATA_DIR, "ogarniemy_userbot")),
         "session_string": os.environ.get("TELEGRAM_SESSION_STRING") or config.get("telegram_session_string", ""),
         "phone": config.get("telegram_phone", ""),
     }
@@ -241,6 +256,37 @@ def init_db() -> None:
               created_at integer not null
             );
 
+            create table if not exists facebook_keyword_hits (
+              id integer primary key autoincrement,
+              target_id text default '',
+              target_name text default '',
+              keyword text not null,
+              username text default '',
+              message text default '',
+              action text default 'collector',
+              source_url text default '',
+              created_at integer not null
+            );
+
+            create table if not exists facebook_collector_posts (
+              id integer primary key autoincrement,
+              facebook_post_id text unique,
+              target_id text default '',
+              target_name text default '',
+              author text default '',
+              author_profile text default '',
+              phone text default '',
+              message text not null,
+              post_url text default '',
+              matched_keywords text default '',
+              matched_exclusions text default '',
+              accepted integer default 1,
+              sent_to_telegram integer default 0,
+              published_to_facebook integer default 0,
+              created_at integer not null,
+              updated_at integer
+            );
+
             create table if not exists app_config (
               key text primary key,
               value text not null
@@ -271,6 +317,10 @@ def init_db() -> None:
         ensure_column(conn, "facebook_targets", "keywords", "text default ''")
         ensure_column(conn, "facebook_targets", "action", "text default 'same_group'")
         ensure_column(conn, "facebook_targets", "response_message_id", "integer")
+        ensure_column(conn, "facebook_keyword_hits", "source_url", "text default ''")
+        ensure_column(conn, "facebook_collector_posts", "target_id", "text default ''")
+        ensure_column(conn, "facebook_collector_posts", "target_name", "text default ''")
+        ensure_column(conn, "facebook_collector_posts", "matched_exclusions", "text default ''")
         ensure_column(conn, "telegram_outbox", "kind", "text default 'send'")
         ensure_column(conn, "telegram_outbox", "source_chat_id", "text default ''")
         ensure_column(conn, "telegram_outbox", "source_message_id", "integer")
@@ -553,7 +603,7 @@ def log_marketing(platform: str, target_type: str, target_id: str, city: str, ac
 
 
 def repair_cyrillic_mojibake(text: str) -> str:
-    if not any(marker in text for marker in ("Р ", "Р°", "Рµ", "Рё", "Рѕ", "Рґ", "СЃ", "С‚", "СЊ", "Рџ", "Рќ", "РЎ", "Р’", "Р“", "Р", "Ð", "Ñ")):
+    if not any(marker in text for marker in ("Р", "а", "е", "и", "о", "д", "с", "т", "ь", "П", "Н", "С", "В", "Г", "И", "Ð", "Ñ")):
         return text
     result = []
     i = 0
@@ -961,7 +1011,7 @@ def run_due_schedules() -> None:
             schedule["city"] or "",
             "scheduled_prepare",
             "prepared",
-            f"{schedule['title']}: РјР°С‚РµСЂРёР°Р» РіРѕС‚РѕРІ Рє РїСѓР±Р»РёРєР°С†РёРё/СЂРµРєР»Р°РјРµ",
+            f"{schedule['title']}: материал готов к публикации/рекламе",
         )
 
 
@@ -1002,7 +1052,7 @@ async def async_run_due_schedules() -> None:
             schedule["city"] or "",
             "scheduled_prepare",
             "prepared",
-            f"{schedule['title']}: Р СР В°РЎвЂљР ВµРЎР‚Р С‘Р В°Р В» Р С–Р С•РЎвЂљР С•Р Р† Р С” Р С—РЎС“Р В±Р В»Р С‘Р С”Р В°РЎвЂ Р С‘Р С‘/РЎР‚Р ВµР С”Р В»Р В°Р СР Вµ",
+            f"{schedule['title']}: материал готов к публикации/рекламе",
         )
     await async_process_telegram_outbox()
 
@@ -1016,11 +1066,11 @@ def stats_text() -> str:
             "select count(*) count from telegram_groups where enabled = 1"
         ).fetchone()["count"]
         hits = conn.execute("select count(*) count from keyword_hits").fetchone()["count"]
-    lines = ["РЎС‚Р°С‚РёСЃС‚РёРєР° Ogarniemy bot:"]
+    lines = ["Статистика Ogarniemy bot:"]
     for row in subs:
         lines.append(f"- {row['role']}: {row['count']}")
-    lines.append(f"- РіСЂСѓРїРїС‹: {groups}")
-    lines.append(f"- РЅР°Р№РґРµРЅРѕ РїРѕ РєР»СЋС‡РµРІС‹Рј СЃР»РѕРІР°Рј: {hits}")
+    lines.append(f"- группы: {groups}")
+    lines.append(f"- найдено по ключевым словам: {hits}")
     return "\n".join(lines)
 
 
@@ -1034,8 +1084,8 @@ async def handle_private_message(message: dict[str, Any]) -> None:
         upsert_subscriber(message)
         await async_send_telegram(
             chat_id,
-            "Р—РґСЂР°РІСЃС‚РІСѓР№С‚Рµ! Р’С‹Р±РµСЂРёС‚Рµ, РєС‚Рѕ РІС‹:\n/client - РєР»РёРµРЅС‚\n/worker - РјР°СЃС‚РµСЂ\n\n"
-            "РњРѕР¶РЅРѕ СѓРєР°Р·Р°С‚СЊ РіРѕСЂРѕРґ: /city Warszawa",
+            "Здравствуйте! Выберите, кто вы:\n/client - клиент\n/worker - мастер\n\n"
+            "Можно указать город: /city Warszawa",
         )
         return
     if lower.startswith("/client"):
@@ -1049,19 +1099,19 @@ async def handle_private_message(message: dict[str, Any]) -> None:
     if lower.startswith("/city"):
         city = text[5:].strip()
         if not city:
-            await async_send_telegram(chat_id, "РќР°РїРёС€РёС‚Рµ С‚Р°Рє: /city Warszawa")
+            await async_send_telegram(chat_id, "Напишите так: /city Warszawa")
             return
         upsert_subscriber(message)
         set_subscriber_city(chat_id, city)
-        await async_send_telegram(chat_id, f"Р“РѕСЂРѕРґ СЃРѕС…СЂР°РЅРµРЅ: {city}")
+        await async_send_telegram(chat_id, f"Город сохранен: {city}")
         return
     if lower.startswith("/stop"):
         stop_subscriber(chat_id)
-        await async_send_telegram(chat_id, "Р Р°СЃСЃС‹Р»РєР° РѕС‚РєР»СЋС‡РµРЅР°.")
+        await async_send_telegram(chat_id, "Рассылка отключена.")
         return
 
     if not is_admin(user_id):
-        await async_send_telegram(chat_id, "РљРѕРјР°РЅРґС‹: /client, /worker, /city, /stop")
+        await async_send_telegram(chat_id, "Команды: /client, /worker, /city, /stop")
         return
 
     if lower.startswith("/stats"):
@@ -1070,14 +1120,14 @@ async def handle_private_message(message: dict[str, Any]) -> None:
     if lower.startswith("/broadcast "):
         parts = text.split(" ", 2)
         if len(parts) < 3:
-            await async_send_telegram(chat_id, "Р¤РѕСЂРјР°С‚: /broadcast all|clients|workers С‚РµРєСЃС‚")
+            await async_send_telegram(chat_id, "Формат: /broadcast all|clients|workers текст")
             return
         sent, total = await async_broadcast_subscribers(parts[1].lower(), parts[2])
-        await async_send_telegram(chat_id, f"РћС‚РїСЂР°РІР»РµРЅРѕ РїРѕРґРїРёСЃС‡РёРєР°Рј: {sent}/{total}")
+        await async_send_telegram(chat_id, f"Отправлено подписчикам: {sent}/{total}")
         return
     if lower.startswith("/postgroups "):
         sent, total = await async_post_to_groups(text.split(" ", 1)[1])
-        await async_send_telegram(chat_id, f"РћРїСѓР±Р»РёРєРѕРІР°РЅРѕ РІ РіСЂСѓРїРїР°С…: {sent}/{total}")
+        await async_send_telegram(chat_id, f"Опубликовано в группах: {sent}/{total}")
         return
     if lower.startswith("/groups"):
         with db() as conn:
@@ -1085,7 +1135,7 @@ async def handle_private_message(message: dict[str, Any]) -> None:
                 "select chat_id, title, city, keywords from telegram_groups where enabled = 1 order by title"
             ).fetchall()
         if not rows:
-            await async_send_telegram(chat_id, "Р“СЂСѓРїРїС‹ РїРѕРєР° РЅРµ РґРѕР±Р°РІР»РµРЅС‹.")
+            await async_send_telegram(chat_id, "Группы пока не добавлены.")
         else:
             await async_send_telegram(
                 chat_id,
@@ -1098,11 +1148,11 @@ async def handle_private_message(message: dict[str, Any]) -> None:
 
     await async_send_telegram(
         chat_id,
-        "РђРґРјРёРЅ-РєРѕРјР°РЅРґС‹:\n"
+        "Админ-команды:\n"
         "/stats\n"
-        "/broadcast all|clients|workers С‚РµРєСЃС‚\n"
-        "/postgroups С‚РµРєСЃС‚\n"
-        "Р’ РіСЂСѓРїРїРµ: /watch РіРѕСЂРѕРґ | СЃР»РѕРІРѕ1, СЃР»РѕРІРѕ2",
+        "/broadcast all|clients|workers текст\n"
+        "/postgroups текст\n"
+        "В группе: /watch город | слово1, слово2",
     )
 
 
@@ -1125,8 +1175,8 @@ async def handle_group_message(message: dict[str, Any]) -> None:
         save_group(message, city=city, keywords=keywords, exclude_keywords=exclude_keywords)
         await async_send_telegram(
             chat_id,
-            "Р“СЂСѓРїРїР° РґРѕР±Р°РІР»РµРЅР°. РЇ Р±СѓРґСѓ СЃРјРѕС‚СЂРµС‚СЊ РєР»СЋС‡РµРІС‹Рµ СЃР»РѕРІР° Рё РѕС‚РІРµС‡Р°С‚СЊ РїСѓР±Р»РёС‡РЅРѕ, "
-            "СЃ РѕРіСЂР°РЅРёС‡РµРЅРёРµРј РїРѕ С‡Р°СЃС‚РѕС‚Рµ.",
+            "Группа добавлена. Я буду смотреть ключевые слова и отвечать публично, "
+            "с ограничением по частоте.",
         )
         return
 
@@ -1226,8 +1276,9 @@ async def handle_telegram_update(update: dict[str, Any]) -> None:
 
 
 async def run_telegram_userbot() -> None:
-    global TELEGRAM_USERBOT_LOOP
+    global TELEGRAM_USERBOT_CLIENT, TELEGRAM_USERBOT_LOOP, TELEGRAM_USERBOT_STOP_REQUESTED
     init_db()
+    TELEGRAM_USERBOT_STOP_REQUESTED = False
     TELEGRAM_USERBOT_LOOP = asyncio.get_running_loop()
     TelegramClient, events, _utils, _MessageMediaPhoto, _FloodWaitError = load_telethon()
     api_id, api_hash = require_userbot_config()
@@ -1240,7 +1291,7 @@ async def run_telegram_userbot() -> None:
             raise RuntimeError(
                 "Telegram userbot session is not authorized. Run: python marketing_bot.py --telegram-login"
             )
-        globals()["TELEGRAM_USERBOT_CLIENT"] = client
+        TELEGRAM_USERBOT_CLIENT = client
 
         @client.on(events.NewMessage())
         async def on_new_message(event: Any) -> None:
@@ -1253,7 +1304,7 @@ async def run_telegram_userbot() -> None:
                 print(f"telegram userbot event error: {exc}")
 
         async def schedule_loop() -> None:
-            while True:
+            while not TELEGRAM_USERBOT_STOP_REQUESTED:
                 try:
                     await async_run_due_schedules()
                 except Exception as exc:
@@ -1265,7 +1316,9 @@ async def run_telegram_userbot() -> None:
         print(f"Telegram userbot started as @{getattr(me, 'username', '') or getattr(me, 'id', '')}.")
         await client.run_until_disconnected()
     finally:
+        TELEGRAM_USERBOT_STOP_REQUESTED = True
         await client.disconnect()
+        TELEGRAM_USERBOT_CLIENT = None
 
 
 def run_telegram_login() -> None:
@@ -1379,11 +1432,41 @@ def telegram_login_status() -> dict[str, Any]:
         "session": session,
         "sessionExists": bool(config.get("session_string")) or os.path.exists(session_path),
         "phone": config.get("phone", ""),
+        "running": telegram_userbot_running(),
     }
 
 
 def run_telegram_polling() -> None:
     asyncio.run(run_telegram_userbot())
+
+
+def telegram_userbot_running() -> bool:
+    client = TELEGRAM_USERBOT_CLIENT
+    try:
+        return bool(client and client.is_connected() and not TELEGRAM_USERBOT_STOP_REQUESTED)
+    except Exception:
+        return bool(client and not TELEGRAM_USERBOT_STOP_REQUESTED)
+
+
+def stop_telegram_userbot() -> bool:
+    global TELEGRAM_USERBOT_STOP_REQUESTED
+    TELEGRAM_USERBOT_STOP_REQUESTED = True
+    client = TELEGRAM_USERBOT_CLIENT
+    loop = TELEGRAM_USERBOT_LOOP
+    if not client:
+        return False
+    try:
+        if loop and loop.is_running():
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(client.disconnect()))
+        else:
+            try:
+                asyncio.run(client.disconnect())
+            except RuntimeError:
+                pass
+        return True
+    except Exception as exc:
+        print(f"telegram userbot stop failed: {exc}")
+        return False
 
 
 def facebook_send(psid: str, text: str) -> bool:
@@ -1414,7 +1497,7 @@ def handle_facebook_event(event: dict[str, Any]) -> None:
             """,
             (sender, int(time.time())),
         )
-    if "РјР°СЃС‚РµСЂ" in message_text or "master" in message_text:
+    if "мастер" in message_text or "master" in message_text:
         facebook_send(sender, WORKER_TEXT)
     else:
         facebook_send(sender, CLIENT_TEXT)

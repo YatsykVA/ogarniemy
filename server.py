@@ -7,6 +7,7 @@ import json
 import mimetypes
 import os
 import secrets
+import shutil
 import sqlite3
 import threading
 import time
@@ -14,7 +15,22 @@ import uuid
 
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.environ.get("TASK_DB_PATH", os.path.join(ROOT, "server.db"))
+DATA_DIR = os.path.abspath(
+    os.environ.get(
+        "OGARNIEMY_DATA_DIR",
+        os.environ.get("TASK_DATA_DIR", os.path.join(os.path.dirname(ROOT), "ogarniemy_data")),
+    )
+)
+os.makedirs(DATA_DIR, exist_ok=True)
+LEGACY_DB_PATH = os.path.join(ROOT, "server.db")
+DB_PATH = os.path.abspath(os.environ.get("TASK_DB_PATH", os.path.join(DATA_DIR, "server.db")))
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+if not os.path.exists(DB_PATH) and os.path.exists(LEGACY_DB_PATH):
+    shutil.copy2(LEGACY_DB_PATH, DB_PATH)
+os.environ.setdefault("TASK_DB_PATH", DB_PATH)
+os.environ.setdefault("MARKETING_BOT_DB", DB_PATH)
+os.environ.setdefault("MARKETING_BOT_CONFIG", os.path.join(DATA_DIR, "marketing_bot_config.json"))
+MARKETING_UPLOAD_DIR = os.path.join(DATA_DIR, "assets", "marketing")
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", os.environ.get("TASK_SERVER_PORT", "8080")))
 ADMIN_PASSWORD = os.environ.get("TASK_ADMIN_PASSWORD", "admin123")
@@ -27,6 +43,7 @@ RETENTION_MAX_DAYS = 365
 CLEANUP_INTERVAL_SECONDS = 60 * 60
 MARKETING_BOT_ENABLED = os.environ.get("MARKETING_BOT_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 MARKETING_BOT_STARTED = False
+MARKETING_BOT_THREAD = None
 
 
 def db():
@@ -271,31 +288,52 @@ def start_cleanup_worker():
 
 
 def start_marketing_bot_worker():
-    global MARKETING_BOT_STARTED
+    global MARKETING_BOT_STARTED, MARKETING_BOT_THREAD
     if not MARKETING_BOT_ENABLED:
-        return
+        return False
+    if MARKETING_BOT_THREAD and MARKETING_BOT_THREAD.is_alive():
+        MARKETING_BOT_STARTED = True
+        return True
     if MARKETING_BOT_STARTED:
-        return
+        return True
     try:
         import marketing_bot
 
         status = marketing_bot.telegram_login_status()
         if not status["configured"] or not status["sessionExists"]:
             print("Marketing userbot is enabled, but Telegram API config or session is missing.")
-            return
+            return False
     except Exception as exc:
         print(f"Marketing bot cannot start: {exc}")
-        return
+        return False
 
     def run():
+        global MARKETING_BOT_STARTED
         try:
             marketing_bot.run_telegram_polling()
         except Exception as exc:
             print(f"Marketing bot stopped: {exc}")
+        finally:
+            MARKETING_BOT_STARTED = False
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
+    MARKETING_BOT_THREAD = thread
     MARKETING_BOT_STARTED = True
+    return True
+
+
+def stop_marketing_bot_worker():
+    global MARKETING_BOT_STARTED
+    try:
+        import marketing_bot
+
+        stopped = marketing_bot.stop_telegram_userbot()
+    except Exception as exc:
+        print(f"Marketing bot stop error: {exc}")
+        stopped = False
+    MARKETING_BOT_STARTED = False
+    return stopped
 
 
 def init_db():
@@ -575,8 +613,13 @@ class App(BaseHTTPRequestHandler):
         self.end_headers()
 
     def send_static_file(self, relative_path, cache_seconds=0):
-        file_path = os.path.abspath(os.path.join(ROOT, relative_path))
-        if os.path.commonpath([ROOT, file_path]) != ROOT or not os.path.isfile(file_path):
+        if relative_path.replace("\\", "/").startswith("assets/marketing/"):
+            file_path = os.path.abspath(os.path.join(DATA_DIR, relative_path))
+            allowed_root = DATA_DIR
+        else:
+            file_path = os.path.abspath(os.path.join(ROOT, relative_path))
+            allowed_root = ROOT
+        if os.path.commonpath([allowed_root, file_path]) != allowed_root or not os.path.isfile(file_path):
             self.send_json({"error": "not_found"}, 404)
             return
         with open(file_path, "rb") as file:
@@ -664,8 +707,13 @@ class App(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        file_path = os.path.abspath(os.path.join(ROOT, relative_path))
-        if os.path.commonpath([ROOT, file_path]) != ROOT or not os.path.isfile(file_path):
+        if relative_path.replace("\\", "/").startswith("assets/marketing/"):
+            file_path = os.path.abspath(os.path.join(DATA_DIR, relative_path))
+            allowed_root = DATA_DIR
+        else:
+            file_path = os.path.abspath(os.path.join(ROOT, relative_path))
+            allowed_root = ROOT
+        if os.path.commonpath([allowed_root, file_path]) != allowed_root or not os.path.isfile(file_path):
             self.send_response(404)
             self.end_headers()
             return
@@ -828,6 +876,12 @@ class App(BaseHTTPRequestHandler):
             return
         if path == "/api/admin/telegram-login/complete":
             self.handle_telegram_login_complete()
+            return
+        if path == "/api/admin/telegram-login/start-bot":
+            self.handle_telegram_userbot_start()
+            return
+        if path == "/api/admin/telegram-login/stop-bot":
+            self.handle_telegram_userbot_stop()
             return
         if path.startswith("/api/admin/marketing/"):
             self.handle_marketing_post(path)
@@ -3461,7 +3515,10 @@ class App(BaseHTTPRequestHandler):
 
     def handle_telegram_login_status(self):
         marketing = self.marketing()
-        self.send_json(marketing.telegram_login_status())
+        status = marketing.telegram_login_status()
+        status["workerEnabled"] = MARKETING_BOT_ENABLED
+        status["workerStarted"] = bool(MARKETING_BOT_THREAD and MARKETING_BOT_THREAD.is_alive())
+        self.send_json(status)
 
     def handle_telegram_login_start(self):
         data = self.read_json()
@@ -3491,6 +3548,23 @@ class App(BaseHTTPRequestHandler):
         if result.get("ok"):
             start_marketing_bot_worker()
         self.send_json(result)
+
+    def handle_telegram_userbot_start(self):
+        if not self.is_admin():
+            self.send_json({"error": "admin_unauthorized"}, 401)
+            return
+        started = start_marketing_bot_worker()
+        if not started:
+            self.send_json({"error": "userbot_not_started"}, 400)
+            return
+        self.send_json({"ok": True})
+
+    def handle_telegram_userbot_stop(self):
+        if not self.is_admin():
+            self.send_json({"error": "admin_unauthorized"}, 401)
+            return
+        stopped = stop_marketing_bot_worker()
+        self.send_json({"ok": True, "stopped": stopped})
 
     def handle_marketing_state(self, platform):
         if not self.is_admin():
@@ -3662,7 +3736,7 @@ class App(BaseHTTPRequestHandler):
                 if not body or len(body) > 5 * 1024 * 1024:
                     self.send_json({"error": "image_too_large"}, 400)
                     return
-                folder = os.path.join(ROOT, "assets", "marketing")
+                folder = MARKETING_UPLOAD_DIR
                 os.makedirs(folder, exist_ok=True)
                 filename = f"{platform}-{int(time.time())}-{uuid.uuid4().hex}{allowed[content_type]}"
                 path = os.path.abspath(os.path.join(folder, filename))
@@ -3715,6 +3789,9 @@ class App(BaseHTTPRequestHandler):
                 message_id = int(data.get("messageId") or 0)
                 city = str(data.get("city", "")).strip()
                 target_id = str(data.get("targetId", "")).strip()
+                if platform == "telegram" and not target_id:
+                    self.send_json({"error": "telegram_target_required"}, 400)
+                    return
                 message = conn.execute("select body, image_url from marketing_messages where id = ? and platform = ?", (message_id, platform)).fetchone()
                 if not message:
                     self.send_json({"error": "message_not_found"}, 404)
@@ -7310,6 +7387,7 @@ TELEGRAM_LOGIN_HTML = r"""<!doctype html>
     button { border: 0; border-radius: 7px; min-height: 42px; padding: 10px 16px; font: inherit; font-weight: 700; cursor: pointer; background: var(--gold); color: var(--ink); box-shadow: 0 6px 14px rgba(23, 32, 38, 0.12); }
     button:hover { background: #ffd86f; }
     button.secondary { background: #e8eef5; color: var(--blue); }
+    button.danger { background: #fff1f0; color: var(--red); }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .status { border-left: 4px solid var(--blue); background: #eef5fb; padding: 12px; border-radius: 7px; margin-bottom: 14px; line-height: 1.45; }
     .error { border-left-color: var(--red); background: #fff1f0; color: #8a1f16; }
@@ -7330,6 +7408,8 @@ TELEGRAM_LOGIN_HTML = r"""<!doctype html>
       <h2>Состояние</h2>
       <div id="status" class="status">Проверяю подключение Telegram.</div>
       <button class="secondary" onclick="loadStatus()">Обновить состояние</button>
+      <button onclick="startUserbot()">Запустить User Bot</button>
+      <button class="danger" onclick="stopUserbot()">Остановить User Bot</button>
     </section>
     <section>
       <h2>1. Отправить код</h2>
@@ -7365,8 +7445,16 @@ TELEGRAM_LOGIN_HTML = r"""<!doctype html>
   </main>
   <script>
     let loginId = "";
+    let adminPassword = sessionStorage.getItem("adminPassword") || "";
     function adminHeaders(extra = {}) {
       return { "Content-Type": "application/json", ...extra };
+    }
+    function adminActionHeaders(extra = {}) {
+      if (!adminPassword) {
+        adminPassword = prompt("Admin password") || "";
+        sessionStorage.setItem("adminPassword", adminPassword);
+      }
+      return { "X-Admin-Password": adminPassword, "Content-Type": "application/json", ...extra };
     }
     function setStatus(text, kind = "") {
       status.className = "status " + kind;
@@ -7379,11 +7467,47 @@ TELEGRAM_LOGIN_HTML = r"""<!doctype html>
         if (!res.ok) return setStatus(data.detail || "Не удалось проверить Telegram userbot.", "error");
         const sessionText = data.sessionExists ? "сессия сохранена" : "сессии пока нет";
         const configText = data.configured ? "API настроен" : "API еще не настроен";
-        setStatus(`${configText}, ${sessionText}. Сессия: ${data.session || "ogarniemy_userbot"}${data.phone ? ", телефон: " + data.phone : ""}.`, data.sessionExists ? "ok" : "");
+        const runningText = data.running ? "User Bot работает" : "User Bot остановлен";
+        setStatus(`${configText}, ${sessionText}, ${runningText}. Сессия: ${data.session || "ogarniemy_userbot"}${data.phone ? ", телефон: " + data.phone : ""}.`, data.running ? "ok" : "");
         if (data.session) sessionName.value = data.session;
       } catch (err) {
         setStatus("Не удалось связаться с сервером Telegram userbot.", "error");
       }
+    }
+    async function startUserbot() {
+      setStatus("Запускаю User Bot...");
+      const res = await fetch("/api/admin/telegram-login/start-bot", {
+        method: "POST",
+        headers: adminActionHeaders(),
+        body: JSON.stringify({})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.error === "admin_unauthorized") {
+          sessionStorage.removeItem("adminPassword"); adminPassword = "";
+        }
+        return setStatus("Не удалось запустить User Bot. Проверьте сессию Telegram и включение MARKETING_BOT_ENABLED.", "error");
+      }
+      setStatus("User Bot запущен.", "ok");
+      loadStatus();
+    }
+    async function stopUserbot() {
+      if (!confirm("Остановить Telegram User Bot? Расписание и поиск в Telegram временно остановятся.")) return;
+      setStatus("Останавливаю User Bot...");
+      const res = await fetch("/api/admin/telegram-login/stop-bot", {
+        method: "POST",
+        headers: adminActionHeaders(),
+        body: JSON.stringify({})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (data.error === "admin_unauthorized") {
+          sessionStorage.removeItem("adminPassword"); adminPassword = "";
+        }
+        return setStatus("Не удалось остановить User Bot.", "error");
+      }
+      setStatus(data.stopped ? "User Bot остановлен." : "User Bot уже был остановлен.", "");
+      loadStatus();
     }
     async function startLogin() {
       if (!apiId.value.trim() || !apiHash.value.trim() || !phone.value.trim()) {
@@ -7739,10 +7863,10 @@ APPROVED_MARKETING_SCRIPT = r"""
       const emptyOption = emptyLabel ? `<option value="" ${!selected ? "selected" : ""}>${esc(emptyLabel)}</option>` : "";
       return emptyOption + (state.messages || []).map(item => `<option value="${item.id}" ${String(item.id) === String(selected) ? "selected" : ""}>#${item.id} ${esc(item.title)}</option>`).join("");
     }
-    function targetOptions(selected = "") {
+    function targetOptions(selected = "", emptyLabel = "") {
       if (platform === "telegram") {
         const groups = (state.groups || []).filter(item => item.enabled);
-        return `<option value="">Все рекламные группы</option>` + groups.map(item => `<option value="${item.chat_id}" ${String(item.chat_id) === String(selected) ? "selected" : ""}>${esc(item.title || item.chat_id)}</option>`).join("");
+        return `<option value="">${esc(emptyLabel || "Все рекламные группы")}</option>` + groups.map(item => `<option value="${item.chat_id}" ${String(item.chat_id) === String(selected) ? "selected" : ""}>${esc(item.title || item.chat_id)}</option>`).join("");
       }
       const targets = state.targets || [];
       return `<option value="">Все Facebook-группы</option>` + targets.map(item => `<option value="${item.id}" ${String(item.id) === String(selected) ? "selected" : ""}>${esc(item.name)}</option>`).join("");
@@ -7796,6 +7920,7 @@ APPROVED_MARKETING_SCRIPT = r"""
     }
     async function sendNow() {
       if (!sendMessage.value) return alert("Выберите рекламный материал.");
+      if (platform === "telegram" && !sendTarget.value) return alert("Выберите одну Telegram-группу. Отправка во все группы отключена.");
       const result = await api("send-now", { targetId:sendTarget.value, messageId:sendMessage.value });
       alert(platform === "telegram" ? `Отправлено: ${result.sent}/${result.total}` : "Facebook отправка подготовлена.");
       loadState();
@@ -7841,7 +7966,8 @@ APPROVED_MARKETING_SCRIPT = r"""
       fbTargetId.value = item.id; fbTargetName.value = item.name || ""; fbTargetLink.value = item.target_id || ""; fbKeywords.value = item.keywords || ""; fbAction.value = item.action || "same_group"; fbMaterial.value = item.response_message_id || ""; fbNotes.value = item.notes || ""; fbEnabled.checked = !!item.enabled;
     }
     function renderCommonSelects() {
-      [scheduleTarget, sendTarget].forEach(select => select.innerHTML = targetOptions(select.value));
+      scheduleTarget.innerHTML = targetOptions(scheduleTarget.value);
+      sendTarget.innerHTML = targetOptions(sendTarget.value, platform === "telegram" ? "Не выбрано" : "");
       [scheduleMessage, sendMessage].forEach(select => select.innerHTML = messageOptions(select.value));
       if (platform === "telegram") {
         watchTarget.innerHTML = watchTargetOptions(watchTarget.value);
