@@ -1,6 +1,0 @@
-# CollectorHub Facebook groups
-# Можно редактировать через кнопку 'Группы Facebook' в программе.
-# Одна группа = одна строка. Можно вставлять URL или ID группы.
-
-https://www.facebook.com/groups/928070684265382
-https://www.facebook.com/groups/pracaswidnicaiwalbrzych/
