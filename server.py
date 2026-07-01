@@ -1091,30 +1091,32 @@ class App(BaseHTTPRequestHandler):
             else:
                 name,url = line,line
             groups.append({"name": name, "url": url})
-        log_path = os.path.join(COLLECTOR_DATA_DIR, "logs", "collectorhub.log")
         log_text = ""
-        if os.path.exists(log_path):
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()[-160:]
-                log_text = "".join(lines)
+        log_candidates = [
+            os.path.join(COLLECTOR_DATA_DIR, "logs", "collectorhub.log"),
+            os.path.join(DATA_ROOT, "logs", "collectorhub.log"),
+            os.path.join(ROOT, "data", "logs", "collectorhub.log"),
+        ]
+        for log_path in log_candidates:
+            if os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()[-220:]
+                    log_text = "".join(lines)
+                break
         proc_running = False
         search_running = False
-        global COLLECTOR_PROCESS, COLLECTOR_SEARCH_PROCESS
+        login_running = False
+        global COLLECTOR_PROCESS, COLLECTOR_SEARCH_PROCESS, COLLECTOR_LOGIN_PROCESS
         if COLLECTOR_PROCESS is not None and COLLECTOR_PROCESS.poll() is None:
             proc_running = True
         if COLLECTOR_SEARCH_PROCESS is not None and COLLECTOR_SEARCH_PROCESS.poll() is None:
             search_running = True
-        login_running = False
-        global COLLECTOR_LOGIN_PROCESS
         if COLLECTOR_LOGIN_PROCESS is not None and COLLECTOR_LOGIN_PROCESS.poll() is None:
             login_running = True
-        profile_dir = os.path.join(COLLECTOR_DATA_DIR, "playwright_profile")
-        facebook_session_saved = os.path.isdir(profile_dir) and any(os.scandir(profile_dir))
         self.send_json({
             "running": proc_running,
             "searchRunning": search_running,
-            "facebookLoginRunning": login_running,
-            "facebookSessionSaved": bool(facebook_session_saved),
+            "loginRunning": login_running,
             "keywords": read_file("keywords.txt"),
             "exclusions": read_file("exclusions.txt"),
             "groupsText": groups_raw,
@@ -1141,7 +1143,39 @@ class App(BaseHTTPRequestHandler):
                 return bool(settings_data.get("headless_browser", os.name != "nt"))
             except Exception:
                 return os.name != "nt"
-        global COLLECTOR_PROCESS, COLLECTOR_LOGIN_PROCESS
+        def log_file_path():
+            path = os.path.join(data_dir, "logs", "collectorhub.log")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            return path
+        def append_collector_log(message):
+            ts = time.strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_file_path(), "a", encoding="utf-8", errors="replace") as f:
+                f.write(f"{ts} | SERVER | {message}\n")
+        def collector_env(extra=None, force_headless=None):
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"
+            env["COLLECTOR_DATA_DIR"] = data_dir
+            env["COLLECTOR_ENV_FILE"] = os.environ["COLLECTOR_ENV_FILE"]
+            headless = current_headless_browser() if force_headless is None else bool(force_headless)
+            env["COLLECTOR_HEADLESS"] = "1" if headless else "0"
+            if extra:
+                env.update(extra)
+            return env
+        def start_background_process(script_name, extra_env=None, force_headless=None):
+            script = os.path.join(COLLECTOR_ROOT, script_name)
+            if not os.path.exists(script):
+                raise FileNotFoundError(f"{script_name} not found")
+            log_path = log_file_path()
+            append_collector_log(f"Запуск {script_name}")
+            log_handle = open(log_path, "a", encoding="utf-8", errors="replace")
+            return subprocess.Popen(
+                [sys.executable, "-u", script],
+                cwd=COLLECTOR_ROOT,
+                stdout=log_handle,
+                stderr=log_handle,
+                env=collector_env(extra_env, force_headless),
+            )
+        global COLLECTOR_PROCESS, COLLECTOR_SEARCH_PROCESS, COLLECTOR_LOGIN_PROCESS
         try:
             if path == "/api/admin/collectorhub/save-words":
                 write_file("keywords.txt", data.get("keywords", ""))
@@ -1228,40 +1262,6 @@ class App(BaseHTTPRequestHandler):
                     json.dump(config_data, f, ensure_ascii=False, indent=4)
                 self.send_json({"ok": True})
                 return
-            if path == "/api/admin/collectorhub/facebook-login-start":
-                if COLLECTOR_LOGIN_PROCESS is not None and COLLECTOR_LOGIN_PROCESS.poll() is None:
-                    self.send_json({"ok": True, "alreadyRunning": True, "pid": COLLECTOR_LOGIN_PROCESS.pid})
-                    return
-                script = os.path.join(COLLECTOR_ROOT, "facebook_login.py")
-                if not os.path.exists(script):
-                    self.send_json({"error": "facebook_login.py not found"}, 500)
-                    return
-                env = os.environ.copy()
-                env["PYTHONUNBUFFERED"] = "1"
-                env["COLLECTOR_HEADLESS"] = "0"
-                COLLECTOR_LOGIN_PROCESS = subprocess.Popen(
-                    [sys.executable, script],
-                    cwd=COLLECTOR_ROOT,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
-                )
-                self.send_json({"ok": True, "pid": COLLECTOR_LOGIN_PROCESS.pid})
-                return
-            if path == "/api/admin/collectorhub/facebook-login-stop":
-                if COLLECTOR_LOGIN_PROCESS is not None and COLLECTOR_LOGIN_PROCESS.poll() is None:
-                    COLLECTOR_LOGIN_PROCESS.terminate()
-                    try:
-                        COLLECTOR_LOGIN_PROCESS.wait(timeout=10)
-                    except Exception:
-                        try:
-                            COLLECTOR_LOGIN_PROCESS.kill()
-                        except Exception:
-                            pass
-                    self.send_json({"ok": True})
-                else:
-                    self.send_json({"ok": True, "alreadyStopped": True})
-                return
             if path == "/api/admin/collectorhub/start":
                 if COLLECTOR_PROCESS is not None and COLLECTOR_PROCESS.poll() is None:
                     self.send_json({"ok": True, "alreadyRunning": True})
@@ -1270,16 +1270,7 @@ class App(BaseHTTPRequestHandler):
                 if not os.path.exists(script):
                     self.send_json({"error": "collector.py not found"}, 500)
                     return
-                env = os.environ.copy()
-                env["PYTHONUNBUFFERED"] = "1"
-                env["COLLECTOR_HEADLESS"] = "1" if current_headless_browser() else "0"
-                COLLECTOR_PROCESS = subprocess.Popen(
-                    [sys.executable, script],
-                    cwd=COLLECTOR_ROOT,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
-                )
+                COLLECTOR_PROCESS = start_background_process("collector.py")
                 self.send_json({"ok": True, "pid": COLLECTOR_PROCESS.pid})
                 return
             if path == "/api/admin/collectorhub/stop":
@@ -1302,25 +1293,41 @@ class App(BaseHTTPRequestHandler):
                 if not os.path.exists(script):
                     self.send_json({"error": "facebook_group_search.py not found"}, 500)
                     return
-                env = os.environ.copy()
-                env["PYTHONUNBUFFERED"] = "1"
-                env["FB_GROUP_SEARCH_QUERIES"] = query
-                env["COLLECTOR_HEADLESS"] = "1" if current_headless_browser() else "0"
-                COLLECTOR_SEARCH_PROCESS = subprocess.Popen(
-                    [sys.executable, script],
-                    cwd=COLLECTOR_ROOT,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=env,
+                COLLECTOR_SEARCH_PROCESS = start_background_process(
+                    "facebook_group_search.py",
+                    {"FB_GROUP_SEARCH_QUERIES": query},
                 )
                 self.send_json({"ok": True, "pid": COLLECTOR_SEARCH_PROCESS.pid})
+                return
+            if path == "/api/admin/collectorhub/facebook-login/start":
+                can_show_browser = (os.name == "nt") or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+                if not can_show_browser:
+                    append_collector_log("Вход Facebook невозможен на этом сервере: нет графического браузера/DISPLAY. Обычная вкладка в вашем браузере не передаёт cookies Playwright-сессии CollectorHub.")
+                    self.send_json({
+                        "error": "Этот сервер не может открыть видимое окно Facebook. На Railway/Linux без экрана нужно перенести рабочую Playwright-сессию из локального CollectorHub или запускать CollectorHub локально.",
+                        "openBrowserUrl": "https://www.facebook.com/login"
+                    }, 409)
+                    return
+                if COLLECTOR_LOGIN_PROCESS is not None and COLLECTOR_LOGIN_PROCESS.poll() is None:
+                    self.send_json({"ok": True, "alreadyRunning": True})
+                    return
+                COLLECTOR_LOGIN_PROCESS = start_background_process("facebook_login.py", force_headless=False)
+                self.send_json({"ok": True, "pid": COLLECTOR_LOGIN_PROCESS.pid})
+                return
+            if path == "/api/admin/collectorhub/facebook-login/stop":
+                if COLLECTOR_LOGIN_PROCESS is not None and COLLECTOR_LOGIN_PROCESS.poll() is None:
+                    COLLECTOR_LOGIN_PROCESS.terminate()
+                    append_collector_log("Facebook login остановлен пользователем. Если вход был выполнен в окне Playwright, сессия сохранена в data/playwright_profile.")
+                    self.send_json({"ok": True})
+                else:
+                    self.send_json({"ok": True, "alreadyStopped": True})
                 return
             if path == "/api/admin/collectorhub/test-telegram":
                 script = os.path.join(COLLECTOR_ROOT, "telegram_test.py")
                 if not os.path.exists(script):
                     self.send_json({"error": "telegram_test.py not found"}, 500)
                     return
-                result = subprocess.run([sys.executable, script], cwd=COLLECTOR_ROOT, capture_output=True, text=True, timeout=90, env={**os.environ.copy(), "PYTHONUNBUFFERED":"1"})
+                result = subprocess.run([sys.executable, script], cwd=COLLECTOR_ROOT, capture_output=True, text=True, timeout=90, env=collector_env())
                 self.send_json({"ok": result.returncode == 0, "code": result.returncode, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, 200 if result.returncode == 0 else 500)
                 return
             if path == "/api/admin/collectorhub/resend-last":
@@ -1328,13 +1335,13 @@ class App(BaseHTTPRequestHandler):
                 if not os.path.exists(script):
                     self.send_json({"error": "telegram_resend_last.py not found"}, 500)
                     return
-                result = subprocess.run([sys.executable, script], cwd=COLLECTOR_ROOT, capture_output=True, text=True, timeout=90, env={**os.environ.copy(), "PYTHONUNBUFFERED":"1"})
+                result = subprocess.run([sys.executable, script], cwd=COLLECTOR_ROOT, capture_output=True, text=True, timeout=90, env=collector_env())
                 self.send_json({"ok": result.returncode == 0, "code": result.returncode, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, 200 if result.returncode == 0 else 500)
                 return
             if path == "/api/admin/collectorhub/reset-posts":
                 script = os.path.join(COLLECTOR_ROOT, "reset_posts_db.py")
                 if os.path.exists(script):
-                    result = subprocess.run([sys.executable, script], cwd=COLLECTOR_ROOT, capture_output=True, text=True, timeout=60, env={**os.environ.copy(), "PYTHONUNBUFFERED":"1"})
+                    result = subprocess.run([sys.executable, script], cwd=COLLECTOR_ROOT, capture_output=True, text=True, timeout=60, env=collector_env())
                     self.send_json({"ok": result.returncode == 0, "code": result.returncode, "stdout": result.stdout[-4000:], "stderr": result.stderr[-4000:]}, 200 if result.returncode == 0 else 500)
                     return
             if path == "/api/admin/collectorhub/clear-posts":
