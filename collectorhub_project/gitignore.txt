@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.*
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Runtime
+data/logs/
+data/playwright_profile/
+data/sessions/
+data/facebook_session.json
+
+# Playwright cache
+playwright-report/
+test-results/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+dist/
+build/
+*.spec
+
+# Misc
+*.log
