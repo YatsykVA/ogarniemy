@@ -1,0 +1,8 @@
+server.db
+server.db-journal
+marketing_bot*.db
+marketing_bot_config.json
+*.session
+*.session-journal
+__pycache__/
+*.pyc
